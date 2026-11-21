@@ -144,3 +144,48 @@ probably thermal); an earlier single pair in the fast state gave forward compile
 compile 3.10 → 1.15 s, i.e. the same relative gains. Compile times do not depend on the number of
 frequencies, so the gains carry over to 101. Full benchmark not run here (≈9 GB peak); to be confirmed on
 the M4 with the unmodified `benchmark.py`.
+
+## Quan — Change B: signal and noise systems as non-zero values (Idea B, on top of grouping)
+
+**Why:** the profile showed about half of the forward run and of the gradient run moving dense
+(frequencies, 751, 752) arrays that are 99.7 % zeros, and the AD tape keeping several dense copies.
+
+**Change (in `combined-four-…` on this branch):**
+- `build.py` `to_value_systems` (called at the end of `run_build_step`): from the setup's own starting matrix
+  and update instructions, list every position of the augmented signal matrix that can ever be non-zero
+  (starting non-zeros, diagonal, every update position, carrier-scaling positions; RHS = column N, `-1`
+  normalised). Update/carrier-scaling instructions become slots in that list; the lower-sideband
+  conjugation becomes a per-slot mask (same block rule as before). Same for the noise matrix.
+  The structures replace the dense matrices under the same argument names, so `simulate()`'s signature
+  and `benchmark.py` are unchanged. Nothing is fixture-specific.
+- `simulate.py`: updates, carrier scaling and conjugation act on a (frequencies, nnz) value array.
+  A dense matrix is built only for `lu_factor`, under `stop_gradient`. Ha's shared-LU
+  `custom_linear_solve` is kept, but its `matvec` is a sparse sum over the values, so JAX differentiates
+  one number per non-zero instead of 751×751, and the tape keeps the LU factors instead of dense copies.
+  The noise product N·w is a sparse sum too. Vinh's batched detectors and Tung's removed solve are kept.
+
+**Correctness** (vs combined-four from `main`; `profiles/ideab/`):
+- carrier and signal **bit-identical** on fixture, aLIGO, Voyager, random UIFOs (so the value-based
+  assembly reproduces the dense matrix exactly); noise/sensitivity identical on the fixture, ≤ 1.8e-15 elsewhere.
+- gradients ≤ 5.7e-15 norm-wise on the small setups; **full fixture gradient (193 values)** 4.0e-11
+  norm-wise (worst element 1.4e-8; ill-conditioned system).
+- **Official, unmodified `benchmark.py`: PASS** (sensitivity vs public reference + finite-difference
+  gradient check). First run on this laptop, 1 CPU: **10.78 s** — the first version that fits in this
+  laptop's RAM under the official benchmark.
+
+**Effect** (laptop, 1 CPU, three versions alternating ×2; `profiles/ideab/summary_staged41_and_benchmark3.txt`):
+
+| | combined-four | grouped | grouped + B |
+|---|---|---|---|
+| Official structure, 41 freq: forward run | 2.34 / 3.52 s | 3.85 / 3.43 s | **1.71 / 1.63 s** |
+| Official structure, 41 freq: gradient run | 0.39 / 0.64 s | 0.57 / 0.56 s | **0.34 / 0.27 s** |
+| benchmark3, 101 freq: run | 6.72 / 6.70 s | 6.37 / 6.36 s | **4.15 / 4.20 s** |
+| benchmark3, 101 freq: compile | 20.99 / 21.03 s | 10.57 / 10.72 s | 10.93 / 11.21 s |
+| benchmark3, 101 freq: total | 30.7 / 30.7 s | 19.2 / 19.3 s | **17.3 / 17.6 s** |
+
+- Idea B: run time −35 % (benchmark3) to −50 % (forward, official structure); compile unchanged.
+- **Caveat on compile times on this laptop:** XLA compile times jump between a "fast" and a ~3× slower
+  "slow" state for the same code (combined-four forward compile seen at 4.5, 5.6, 14–16 s; grouped at
+  2.6 and 7.6–8.9 s). Only same-state pairs are comparable; those show grouping at about −40 %
+  (4.46 → 2.61 s fast, 14.3 → 8.1 s slow). Python-side lowering is stable and shows grouping −35–45 %.
+  The M4 measurement decides the compile question.

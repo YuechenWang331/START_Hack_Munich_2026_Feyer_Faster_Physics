@@ -1,0 +1,61 @@
+  [combined-four-20261121-184759] uifo_800_3000: 20.0s (with gradient)
+  [combined-four-20261121-184759] aligo: 11.0s (with gradient)
+  [combined-four-20261121-184759] voyager: 12.2s (with gradient)
+  [combined-four-20261121-184759] uifo_random_2x2_seed0: 11.4s (with gradient)
+  [combined-four-20261121-184759] uifo_random_2x2_seed1: 13.0s (with gradient)
+  [combined-four-20261121-184759] uifo_800_3000: 13.4s (with gradient)
+  [combined-four-20261121-184759] aligo: 7.4s (with gradient)
+  [combined-four-20261121-184759] voyager: 8.2s (with gradient)
+  [combined-four-20261121-184759] uifo_random_2x2_seed0: 9.5s (with gradient)
+  [combined-four-20261121-184759] uifo_random_2x2_seed1: 10.3s (with gradient)
+
+array                                       shape identical  max abs err  max rel err
+aligo.carrier                             (36, 1)      True    0.000e+00    0.000e+00
+aligo.gradient                              (29,)     False    1.160e-11    4.867e-01
+                                     norm-wise |g_new - g_ref| / |g_ref| = 5.726e-15   (|g_ref| = 2.182e+03)
+                                       worst index 11: ref -1.446157e+02  new -1.446157e+02
+                                       worst index 7: ref -2.177049e+03  new -2.177049e+03
+                                       worst index 8: ref -3.272650e+00  new -3.272650e+00
+aligo.loss                                     ()      True    0.000e+00    0.000e+00
+aligo.noise                                (101,)     False    7.270e-27    1.746e-15
+aligo.sensitivity                          (101,)     False    2.571e-39    1.806e-15
+aligo.signal                            (82, 101)      True    0.000e+00    0.000e+00
+uifo_800_3000.carrier                    (286, 1)      True    0.000e+00    0.000e+00
+uifo_800_3000.gradient                     (193,)     False    2.103e-06    1.445e-08
+                                     norm-wise |g_new - g_ref| / |g_ref| = 4.010e-11   (|g_ref| = 7.052e+04)
+                                       worst index 29: ref  5.758565e+04  new  5.758565e+04
+                                       worst index 131: ref  2.798531e+04  new  2.798531e+04
+                                       worst index 15: ref -2.411034e+04  new -2.411034e+04
+uifo_800_3000.loss                             ()      True    0.000e+00    0.000e+00
+uifo_800_3000.noise                        (101,)      True    0.000e+00    0.000e+00
+uifo_800_3000.sensitivity                  (101,)      True    0.000e+00    0.000e+00
+uifo_800_3000.signal                   (751, 101)      True    0.000e+00    0.000e+00
+uifo_random_2x2_seed0.carrier            (152, 1)      True    0.000e+00    0.000e+00
+uifo_random_2x2_seed0.gradient             (107,)      True    0.000e+00    0.000e+00  non-finite in BOTH (degenerate setup)
+uifo_random_2x2_seed0.loss                     ()      True    0.000e+00    0.000e+00  non-finite in BOTH (degenerate setup)
+uifo_random_2x2_seed0.noise                (101,)      True    0.000e+00    0.000e+00
+uifo_random_2x2_seed0.sensitivity          (101,)      True    0.000e+00    0.000e+00  non-finite in BOTH (degenerate setup)
+uifo_random_2x2_seed0.signal           (395, 101)      True    0.000e+00    0.000e+00
+uifo_random_2x2_seed1.carrier            (152, 1)      True    0.000e+00    0.000e+00
+uifo_random_2x2_seed1.gradient             (100,)     False    2.910e-11    4.318e-16
+                                     norm-wise |g_new - g_ref| / |g_ref| = 4.905e-17   (|g_ref| = 5.934e+05)
+                                       worst index 97: ref  2.096969e+05  new  2.096969e+05
+                                       worst index 70: ref  3.796928e+00  new  3.796928e+00
+                                       worst index 75: ref -7.414041e-06  new -7.414041e-06
+uifo_random_2x2_seed1.loss                     ()      True    0.000e+00    0.000e+00
+uifo_random_2x2_seed1.noise                (101,)      True    0.000e+00    0.000e+00
+uifo_random_2x2_seed1.sensitivity          (101,)      True    0.000e+00    0.000e+00
+uifo_random_2x2_seed1.signal           (393, 101)      True    0.000e+00    0.000e+00
+voyager.carrier                           (70, 1)      True    0.000e+00    0.000e+00
+voyager.gradient                            (45,)     False    8.882e-13    1.101e+00
+                                     norm-wise |g_new - g_ref| / |g_ref| = 1.457e-16   (|g_ref| = 6.128e+03)
+                                       worst index 5: ref  4.239985e+01  new  4.239985e+01
+                                       worst index 6: ref -1.100032e-01  new -1.100032e-01
+                                       worst index 12: ref  1.236083e-01  new  1.236083e-01
+voyager.loss                                   ()      True    0.000e+00    0.000e+00
+voyager.noise                              (101,)      True    0.000e+00    0.000e+00
+voyager.sensitivity                        (101,)      True    0.000e+00    0.000e+00
+voyager.signal                         (161, 101)      True    0.000e+00    0.000e+00
+
+fixture vs public reference: max |ln S - ln S_ref| = 5.375e-06 (limit 1e-5) -> OK
+OUTPUT CHECK PASS

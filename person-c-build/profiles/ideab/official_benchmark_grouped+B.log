@@ -1,0 +1,35 @@
+Initialize CPU backend: 0.010410 s
+CPU: Intel64 Family 6 Model 165 Stepping 2, GenuineIntel; affinity: unknown; devices: [CpuDevice(id=0)]
+Read and parse public inputs: 0.002732 s
+Build optical setup and prepare inputs: 0.105255 s
+Workload: 101 frequencies; 193 physical design variables; no optimizer
+Forward: trace / lower: 1.170877 s
+Forward: compile: 3.188428 s
+Forward simulation + AD residuals: 3.421077 s
+Sensitivity: trace / lower: 0.038350 s
+Sensitivity: compile: 0.134292 s
+Sensitivity, powers and scalar loss: 0.000597 s
+Gradient: trace / lower: 0.239017 s
+Gradient: compile: 1.182611 s
+Reverse-mode gradient: 0.526192 s
+Transfer results to host: 0.000328 s
+Complete first-run total (excluding validation): 10.783055 s
+Forward: 3.447417 s
+Sensitivity: 0.000375 s
+Gradient: 0.574932 s
+Host transfer: 0.000356 s
+Repeat 01/3: 4.023079 s
+Forward: 3.577187 s
+Sensitivity: 0.000359 s
+Gradient: 0.542176 s
+Host transfer: 0.000206 s
+Repeat 02/3: 4.119928 s
+Forward: 3.437936 s
+Sensitivity: 0.000405 s
+Gradient: 0.520625 s
+Host transfer: 0.000209 s
+Repeat 03/3: 3.959174 s
+Validating outputs, reference sensitivity and finite-difference gradient...
+PASS: reference sensitivity and gradient spot check; full runtime median 4.023079 s
+JSON: C:\Users\DELL\AppData\Local\Temp\official-ideab\benchmark_team-build-opt_r1.json
+Plot: C:\Users\DELL\AppData\Local\Temp\official-ideab\benchmark_team-build-opt_r1.png

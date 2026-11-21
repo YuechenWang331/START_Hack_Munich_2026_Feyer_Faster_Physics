@@ -1,0 +1,11 @@
+Initialize CPU backend: 0.009815 s
+CPU: Intel64 Family 6 Model 165 Stepping 2, GenuineIntel; affinity: unknown; devices: [CpuDevice(id=0)]
+Read and parse public inputs: 0.002690 s
+Build optical setup and prepare inputs: 0.101098 s
+Workload: 101 frequencies; 193 physical design variables; no optimizer
+Fused evaluation + gradient: trace / lower: 1.337093 s
+Fused evaluation + gradient: compile: 11.205448 s
+Forward + readout + gradient: 4.202346 s
+Transfer results to host: 0.000318 s
+Complete first-run total (excluding validation): 17.644678 s
+Validating outputs, reference sensitivity and finite-difference gradient...

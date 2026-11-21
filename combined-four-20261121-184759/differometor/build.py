@@ -151,6 +151,111 @@ def _group_by_function(function_input_indices, function_indices, output_indices)
     return grouped_inputs, grouped_rows, remapped
 
 
+# ---------------------------------------------------------------------
+# Signal and noise systems as lists of non-zero values (Idea B)
+# ---------------------------------------------------------------------
+# The signal matrix is ~99.7 % zeros. Working on a dense (frequencies, N, N + 1) stack
+# makes the forward pass move mostly zeros through memory and makes the AD tape keep
+# several dense copies. Instead, `simulate` keeps one complex value per position that
+# can ever be non-zero. The positions are derived here from the starting matrix and
+# the update instructions of THIS setup, so nothing depends on a particular fixture.
+
+
+def _normalised_positions(indices, shape):
+    """Index pair (rows, cols) -> non-negative positions, like NumPy/JAX indexing (-1 = last)."""
+    rows = np.asarray(indices[0], dtype=np.int64).reshape(-1)
+    cols = np.asarray(indices[1], dtype=np.int64).reshape(-1)
+    assert np.all((rows >= -shape[0]) & (rows < shape[0])), "row index outside the matrix"
+    assert np.all((cols >= -shape[1]) & (cols < shape[1])), "column index outside the matrix"
+    return rows % shape[0], cols % shape[1]
+
+
+def _value_layout(matrix, *index_pairs, with_diagonal=False):
+    """
+    Sorted (row, col) of every position that is non-zero in `matrix` or written by any
+    of `index_pairs`, plus a function mapping (rows, cols) to slots in that list.
+    """
+    matrix = np.asarray(matrix)
+    nonzero_rows, nonzero_cols = np.nonzero(matrix)
+    rows = [nonzero_rows]
+    cols = [nonzero_cols]
+    if with_diagonal:
+        rows.append(np.arange(min(matrix.shape)))
+        cols.append(np.arange(min(matrix.shape)))
+    for pair in index_pairs:
+        pair_rows, pair_cols = _normalised_positions(pair, matrix.shape)
+        rows.append(pair_rows)
+        cols.append(pair_cols)
+    width = matrix.shape[1]
+    keys = np.unique(np.concatenate(rows) * width + np.concatenate(cols))
+    layout_rows, layout_cols = np.divmod(keys, width)
+
+    def slots(pair):
+        pair_rows, pair_cols = _normalised_positions(pair, matrix.shape)
+        return np.searchsorted(keys, pair_rows * width + pair_cols)
+
+    return layout_rows, layout_cols, slots
+
+
+def to_value_systems(simulation_arrays: dict, carrier_size: int) -> dict:
+    """
+    Replace the dense signal and noise matrices of `run_build_step`'s output by their
+    non-zero values (same argument names, so `simulate`'s signature is unchanged).
+
+    signal_matrix  -> (base_values, conjugate, system_slots, system_rows, system_columns,
+                       rhs_slots, rhs_rows)
+        base_values      (nnz,)  starting value at every possible non-zero position of the
+                                 augmented matrix (N, N + 1); column N is the right-hand side
+        conjugate        (nnz,)  True where the lower-sideband conjugation applies
+        system_slots     slots with column < N, and their (row, column) in the N x N system
+        rhs_slots        slots in the right-hand-side column, and their rows
+    signal_matrix_indices           -> (slots,) where each update output is written
+    signal_carrier_placing_indices  -> (slots,) of the entries scaled by the carrier
+    noise_matrix   -> (base_values, rows, columns)
+    noise_system_matrix_indices     -> (slots,)
+    """
+    arrays = dict(simulation_arrays)
+
+    signal_matrix = np.asarray(arrays["signal_matrix"])
+    system_size = signal_matrix.shape[0]
+    rows, cols, slots = _value_layout(
+        signal_matrix,
+        np.asarray(arrays["signal_matrix_indices"]),
+        np.asarray(arrays["signal_carrier_placing_indices"]),
+        with_diagonal=True,
+    )
+    # Same rule as the dense conjugation in simulate(): lower-sideband rows from column n on,
+    # and the signal rows over the upper-sideband columns (column N, the RHS, counts as >= n).
+    lower = (rows >= carrier_size) & (rows < 2 * carrier_size)
+    conjugate = (lower & (cols >= carrier_size)) | ((rows >= 2 * carrier_size) & (cols < carrier_size))
+    in_system = cols < system_size
+    arrays["signal_matrix"] = (
+        _device_array(signal_matrix[rows, cols], dtype=np.complex128),
+        _device_array(conjugate, dtype=bool),
+        _device_array(np.flatnonzero(in_system), dtype=np.int64),
+        _device_array(rows[in_system], dtype=np.int64),
+        _device_array(cols[in_system], dtype=np.int64),
+        _device_array(np.flatnonzero(~in_system), dtype=np.int64),
+        _device_array(rows[~in_system], dtype=np.int64),
+    )
+    arrays["signal_matrix_indices"] = _device_array(slots(np.asarray(arrays["signal_matrix_indices"])), dtype=np.int64)
+    arrays["signal_carrier_placing_indices"] = _device_array(
+        slots(np.asarray(arrays["signal_carrier_placing_indices"])), dtype=np.int64
+    )
+
+    noise_matrix = np.asarray(arrays["noise_matrix"])
+    noise_rows, noise_cols, noise_slots = _value_layout(noise_matrix, np.asarray(arrays["noise_system_matrix_indices"]))
+    arrays["noise_matrix"] = (
+        _device_array(noise_matrix[noise_rows, noise_cols], dtype=np.complex128),
+        _device_array(noise_rows, dtype=np.int64),
+        _device_array(noise_cols, dtype=np.int64),
+    )
+    arrays["noise_system_matrix_indices"] = _device_array(
+        noise_slots(np.asarray(arrays["noise_system_matrix_indices"])), dtype=np.int64
+    )
+    return arrays
+
+
 def _reshape_to_row(values):
     """`values.reshape(1, -1)` on the host when that cannot change the result's JAX type."""
     if isinstance(values, jax.Array) and not values.weak_type:

@@ -172,6 +172,8 @@ def main():
     parser.add_argument("--repo", type=Path, required=True)
     parser.add_argument("--frequencies", type=int, default=101, help="evenly spaced subset of the 101 frequencies")
     parser.add_argument("--trace", action="store_true", help="record and summarise a profiler trace of the runs")
+    parser.add_argument("--fused", action="store_true",
+                        help="time benchmark3.py's structure instead: ONE jit of value_and_grad(simulate + readout)")
     args = parser.parse_args()
     repo = args.repo.resolve()
     sys.path.insert(0, str(repo))
@@ -231,6 +233,20 @@ def main():
         return result
 
     trace_dir = tempfile.mkdtemp(prefix="jaxtrace-")
+    if args.fused:
+        # benchmark3.py structure: forward, readout and gradient in one compiled program.
+        def evaluate(p, a, detector_ports, target):
+            outputs = df.simulate(**dict(a, optimized_parameters=p))
+            loss, (sensitivity, powers) = readout(outputs, detector_ports, target)
+            return loss, (outputs, sensitivity, powers)
+        lowered = timed("fused_lower", lambda: jax.jit(jax.value_and_grad(evaluate, has_aux=True)).lower(parameters, arrays, ports, expected))
+        compiled = timed("fused_compile", lowered.compile)
+        (loss, _), gradient = timed("fused_run", lambda: compiled(parameters, arrays, ports, expected))
+        print(f"repo: {repo.name} | FUSED | frequencies: {len(pick)} | gradient norm {float(jnp.linalg.norm(gradient)):.6e} | loss {float(loss):.6e}")
+        for key, seconds in timings.items():
+            print(f"  {key:18s} {seconds:8.3f} s")
+        print(f"  peak memory        {peak_memory_gib():8.2f} GiB")
+        return
     forward_lowered = timed("forward_lower", lambda: jax.jit(forward_with_pullback).lower(parameters, arrays))
     forward = timed("forward_compile", forward_lowered.compile)
     if args.trace:
