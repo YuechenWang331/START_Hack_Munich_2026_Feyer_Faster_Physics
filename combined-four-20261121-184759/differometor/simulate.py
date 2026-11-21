@@ -81,10 +81,10 @@ def solve(matrix: jnp.ndarray, right_hand_side: jnp.ndarray) -> jnp.ndarray:
 def update(
     parameters: jnp.ndarray,
     matrix: jnp.ndarray,
-    function_input_indices: jnp.ndarray,
+    function_input_indices: tuple[jnp.ndarray, ...],
     output_indices: tuple[jnp.ndarray, jnp.ndarray],
     matrix_indices: tuple[jnp.ndarray, jnp.ndarray],
-    function_indices: jnp.ndarray,
+    function_indices: tuple[jnp.ndarray, ...],
 ) -> jnp.ndarray:
     """
     Update selected entries of a system matrix by evaluating component functions.
@@ -100,18 +100,19 @@ def update(
     matrix : jnp.ndarray
         Base matrix to update, shape (N, N + 1) for augmented systems, or (N, N).
         The function writes entries in-place (functionally) using `.at[...].set(...)`.
-    function_input_indices : jnp.ndarray
-        Indices into `parameters` selecting inputs to the component functions,
-        shape (K,).
+    function_input_indices : tuple[jnp.ndarray, ...]
+        One entry per function in the global `FUNCTIONS` list: indices into
+        `parameters` for every call of that function, shape (K_f, W). Built by
+        `build._group_by_function`; unused functions have K_f = 0.
     output_indices : tuple[jnp.ndarray, jnp.ndarray]
-        Pair of index arrays selecting entries from the evaluated output matrix.
+        Pair of index arrays selecting entries from the evaluated output matrix,
+        whose rows are the calls of all groups concatenated in `FUNCTIONS` order.
         Each element has shape (M,). Together they define M output positions.
     matrix_indices : tuple[jnp.ndarray, jnp.ndarray]
         Pair of index arrays selecting where to write into `matrix`.
         Each element has shape (M,).
-    function_indices : jnp.ndarray
-        Indices selecting which function to use for each input, shape (K,).
-        Values index into the global `FUNCTIONS` list.
+    function_indices : tuple[jnp.ndarray, ...]
+        Original call numbers of each group (bookkeeping only, not used here).
 
     Returns
     -------
@@ -120,12 +121,17 @@ def update(
 
     Notes
     -----
-    `lax.switch` selects functions from the global `FUNCTIONS` list. In JAX, a
-    Python list of callables referenced as a global is treated as static during
-    tracing, which keeps the function jittable as long as the list is stable.
+    Each function is evaluated once, vectorised over only its own calls. The group
+    sizes are array shapes, so which functions run is fixed at trace time. (Before,
+    `vmap(lax.switch(FUNCTIONS))` evaluated all functions for every call, which made
+    the compiled forward and gradient programs several times larger.)
     """
-    function_inputs = parameters[function_input_indices]
-    output_matrix = vmap(lambda i, x: lax.switch(i, FUNCTIONS, x))(function_indices, function_inputs)
+    group_outputs = [
+        vmap(FUNCTIONS[function_id])(parameters[group_indices])
+        for function_id, group_indices in enumerate(function_input_indices)
+        if group_indices.shape[0] > 0
+    ]
+    output_matrix = jnp.concatenate(group_outputs, axis=0)
     outputs = output_matrix[output_indices[0], output_indices[1]]
     return matrix.at[matrix_indices[0], matrix_indices[1]].set(outputs)
 
@@ -189,20 +195,20 @@ def simulate(
     linking_function_indices: jnp.ndarray,
     indices_to_link: jnp.ndarray,
     # carrier arrays
-    carrier_function_input_indices: jnp.ndarray,
-    carrier_function_indices: jnp.ndarray,
+    carrier_function_input_indices: tuple[jnp.ndarray, ...],
+    carrier_function_indices: tuple[jnp.ndarray, ...],
     carrier_output_indices: tuple[jnp.ndarray, jnp.ndarray],
     carrier_matrix_indices: tuple[jnp.ndarray, jnp.ndarray],
     # signal arrays
-    signal_function_input_indices: jnp.ndarray,
-    signal_function_indices: jnp.ndarray,
+    signal_function_input_indices: tuple[jnp.ndarray, ...],
+    signal_function_indices: tuple[jnp.ndarray, ...],
     signal_output_indices: tuple[jnp.ndarray, jnp.ndarray],
     signal_matrix_indices: tuple[jnp.ndarray, jnp.ndarray],
     signal_carrier_indices: jnp.ndarray,
     signal_carrier_placing_indices: tuple[jnp.ndarray, jnp.ndarray],
     # noise arrays
-    noise_function_input_indices: jnp.ndarray,
-    noise_function_indices: jnp.ndarray,
+    noise_function_input_indices: tuple[jnp.ndarray, ...],
+    noise_function_indices: tuple[jnp.ndarray, ...],
     noise_output_indices: tuple[jnp.ndarray, jnp.ndarray],
     noise_system_matrix_indices: tuple[jnp.ndarray, jnp.ndarray],
 ) -> tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]:

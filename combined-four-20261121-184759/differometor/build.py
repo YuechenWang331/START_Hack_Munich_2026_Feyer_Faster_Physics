@@ -105,6 +105,52 @@ def _device_array(value, dtype=None) -> jnp.ndarray:
     return jnp.asarray(np.asarray(value, dtype=dtype))
 
 
+def _group_by_function(function_input_indices, function_indices, output_indices):
+    """
+    Regroup component-function calls by function type, at build time.
+
+    `simulate.update` used to evaluate `lax.switch(FUNCTIONS)` for every call. Under
+    `vmap` that evaluates all 19 component functions for every matrix entry, which makes
+    the forward and gradient programs (and their compile times) large. Grouping lets
+    `update` evaluate each function once, vectorised over only its own calls.
+
+    Parameters
+    ----------
+    function_input_indices:
+        Array `(K, W)`: parameter indices for each of the K function calls.
+    function_indices:
+        Length-K sequence: index into `FUNCTIONS` for each call.
+    output_indices:
+        Array `(2, M)`: (call row, output column) of each value written to the matrix.
+
+    Returns
+    -------
+    grouped_inputs:
+        Tuple with one `(K_f, W)` index array per entry of `FUNCTIONS` (empty if unused).
+    grouped_rows:
+        Tuple with the original call numbers of each group (bookkeeping/checks only).
+    output_indices:
+        Copy of `output_indices` with call rows renumbered to the grouped order
+        (groups concatenated in `FUNCTIONS` order).
+    """
+    function_input_indices = np.asarray(function_input_indices, dtype=np.int64)
+    function_indices = np.asarray(function_indices, dtype=np.int64).reshape(-1)
+    output_indices = np.asarray(output_indices).astype(np.int64)
+    assert len(function_indices) == len(function_input_indices), "one function per call row expected"
+    assert output_indices[0].max(initial=0) < len(function_indices), "output row outside the function calls"
+
+    rows_per_function = [np.flatnonzero(function_indices == f) for f in range(len(FUNCTIONS))]
+    new_position = np.empty(len(function_indices), dtype=np.int64)
+    new_position[np.concatenate(rows_per_function)] = np.arange(len(function_indices))
+    remapped = output_indices.copy()
+    remapped[0] = new_position[output_indices[0]]
+
+    width = function_input_indices.shape[1]
+    grouped_inputs = tuple(_device_array(function_input_indices[rows].reshape(-1, width), dtype=np.int64) for rows in rows_per_function)
+    grouped_rows = tuple(_device_array(rows, dtype=np.int64) for rows in rows_per_function)
+    return grouped_inputs, grouped_rows, remapped
+
+
 def _reshape_to_row(values):
     """`values.reshape(1, -1)` on the host when that cannot change the result's JAX type."""
     if isinstance(values, jax.Array) and not values.weak_type:
@@ -1733,16 +1779,17 @@ def pairs_to_arrays(
         """
         if len(arrays["function_input_indices"]) == 0:
             # Dummy update that leaves matrices unchanged.
-            return (
-                _device_array([[0, 0, 0]]),
-                _device_array([FUNCTIONS.index(dummy_function)]),
-                _device_array([[0], [0]]),
-                _device_array([[0], [0]]),
+            grouped_inputs, grouped_rows, output_indices = _group_by_function(
+                np.array([[0, 0, 0]]), [FUNCTIONS.index(dummy_function)], np.array([[0], [0]])
             )
+            return (grouped_inputs, grouped_rows, _device_array(output_indices, dtype=int), _device_array([[0], [0]]))
 
         function_input_indices = np.vstack(arrays["function_input_indices"])
         output_indices = np.stack((np.concatenate(arrays["output_row_indices"]), np.concatenate(arrays["output_column_indices"])))
         system_matrix_indices = np.stack((np.concatenate(arrays["system_matrix_row_indices"]), np.concatenate(arrays["system_matrix_column_indices"])))
+        grouped_inputs, grouped_rows, output_indices = _group_by_function(
+            function_input_indices, arrays["function_indices"], output_indices
+        )
 
         if signal:
             # Dummy carrier coupling values if none are required.
@@ -1756,8 +1803,8 @@ def pairs_to_arrays(
                 )
 
             return (
-                _device_array(function_input_indices, dtype=int),
-                _device_array(arrays["function_indices"], dtype=int),
+                grouped_inputs,
+                grouped_rows,
                 _device_array(output_indices, dtype=int),
                 _device_array(system_matrix_indices, dtype=int),
                 _device_array(carrier_solution_indices, dtype=int),
@@ -1765,8 +1812,8 @@ def pairs_to_arrays(
             )
 
         return (
-            _device_array(function_input_indices, dtype=int),
-            _device_array(arrays["function_indices"], dtype=int),
+            grouped_inputs,
+            grouped_rows,
             _device_array(output_indices, dtype=int),
             _device_array(system_matrix_indices, dtype=int),
         )

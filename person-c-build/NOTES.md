@@ -105,3 +105,42 @@ Where the time goes (profiler trace, 21 freq):
 - Forward compile: 26,009 HLO lines, dominated by multiply/broadcast/select/compare = the 19-branch switch.
 - Forward run: LU 32 % (necessary for dense LU), dense copies/slices/scatters/selects ≈ 55 %
   (simulate.py:350 `system = signal_matrix[:, :, :-1]`, 130 update scatter, 348 conjugation `where`, 39 transpose).
+
+## Quan — Change G1: `update()` grouped by function type (in `combined-four-…` on this branch)
+
+**Why:** the profile showed the gradient stage is mostly compile time. `update()` evaluated
+`vmap(lax.switch(FUNCTIONS))`: under `vmap`, all 19 component functions run for every matrix entry and
+one result is selected. That made the forward program 26,009 HLO lines and the gradient 5,736 lines.
+
+**Change:**
+- `build.py` (`_group_by_function`, called from `pairs_to_arrays`): at build time, sort the function calls
+  by function type. `*_function_input_indices` becomes a tuple with one `(K_f, 7)` index array per entry of
+  `FUNCTIONS` (empty when unused); `*_output_indices` rows are renumbered to the grouped order;
+  `*_function_indices` keeps each group's original call numbers (bookkeeping only).
+- `simulate.py` `update()`: for each non-empty group, `vmap(FUNCTIONS[f])` over only that group's calls,
+  then concatenate. Group sizes are array shapes, so the choice is fixed at trace time. Applies to the
+  carrier, signal and noise matrices (Yuechen's `compile-carrier` did the carrier only).
+- Generic: groups come from whatever functions the setup uses; nothing fixture-specific.
+
+**Correctness** (`profiles/check_outputs_combined-four_vs_grouped.txt`, vs unchanged combined-four):
+carrier, signal, noise, sensitivity, loss bit-identical on all cases; gradients ‖Δg‖/‖g‖ ≤ 4.9e-17
+(summation order). Build arrays: only the regrouped/renumbered arrays differ, everything else identical
+on 11 setups. Fixture vs public reference 5.375e-6 (limit 1e-5).
+
+**Effect** (laptop, 1 CPU, 21 frequencies, old/new alternating ×3, `profiles/old_vs_grouped_21freq_alternating.txt`):
+
+| Stage | combined-four | grouped | change |
+|---|---|---|---|
+| Forward lower | 1.86–1.89 s | 1.18–1.20 s | −37 % |
+| Forward compile | 14.06–14.64 s | 8.09–8.21 s | −43 % |
+| Forward run | 1.81–1.87 s | 1.75–1.79 s | ≈ −4 % |
+| Gradient lower | 0.47–0.48 s | 0.24–0.25 s | −49 % |
+| **Gradient compile** | **7.00 s** | **3.07–3.13 s** | **−56 %** |
+| Gradient run | 0.32 s | 0.30–0.31 s | ≈ −5 % |
+
+HLO size: forward 26,009 → 17,617 lines; gradient 5,736 → 3,877 lines (tape leaves 1,525 → 1,004).
+The laptop ran ~3× slower overall during this series than in the earlier profile (same code, mains power,
+probably thermal); an earlier single pair in the fast state gave forward compile 4.46 → 2.61 s and gradient
+compile 3.10 → 1.15 s, i.e. the same relative gains. Compile times do not depend on the number of
+frequencies, so the gains carry over to 101. Full benchmark not run here (≈9 GB peak); to be confirmed on
+the M4 with the unmodified `benchmark.py`.

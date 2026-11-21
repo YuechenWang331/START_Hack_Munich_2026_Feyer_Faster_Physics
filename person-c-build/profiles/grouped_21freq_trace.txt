@@ -1,0 +1,85 @@
+repo: combined-four-20261121-184759 | frequencies: 21 | gradient norm 6.767197e+04 | loss 1.414135e-07
+  forward_lower         1.186 s
+  forward_compile       2.610 s
+  forward_run           1.173 s
+  gradient_lower        0.233 s
+  gradient_compile      1.145 s
+  gradient_run          0.199 s
+  peak memory            2.12 GiB
+  AD residuals (tape)    1.27 GiB
+
+FORWARD: 17617 HLO lines | flops 4.177e+08 | bytes accessed 7.17 GiB
+  most frequent ops: multiply 1914, parameter 1724, broadcast 1706, constant 1589, bitcast 988, select 825, compare 806, add 745, fusion 574, copy 499
+  largest outputs:
+        181.0 MiB  parameter      ?
+        181.0 MiB  transpose      simulate.py:344 scatter-add
+        181.0 MiB  copy           simulate.py:344 scatter-add
+        181.0 MiB  complex        simulate.py:354 complex
+        181.0 MiB  select         simulate.py:354 select_n
+        181.0 MiB  parameter      ?
+        181.0 MiB  transpose      simulate.py:344 scatter-add
+        181.0 MiB  copy           simulate.py:344 scatter-add
+        181.0 MiB  complex        simulate.py:354 complex
+        181.0 MiB  select         simulate.py:354 select_n
+        181.0 MiB  copy           simulate.py:354 select_n
+        181.0 MiB  parameter      ?
+  measured time by source line:
+    matched XLA op time: 1.467 s
+       0.529 s   36.0%  simulate.py:357 lu [custom-call]
+       0.219 s   14.9%  ? [copy]
+       0.160 s   10.9%  simulate.py:356 slice [fusion]
+       0.100 s    6.8%  simulate.py:136 select_n [fusion]
+       0.090 s    6.1%  ? [fusion]
+       0.080 s    5.5%  simulate.py:136 scatter-add [fusion]
+       0.073 s    5.0%  simulate.py:39 transpose [fusion]
+       0.069 s    4.7%  simulate.py:344 eq [fusion]
+       0.028 s    1.9%  simulate.py:47 triangular_solve [custom-call]
+       0.027 s    1.8%  simulate.py:41 triangular_solve [custom-call]
+       0.026 s    1.8%  simulate.py:344 select_n [fusion]
+       0.019 s    1.3%  simulate.py:357 lu [fusion]
+       0.011 s    0.8%  simulate.py:47 while [while]
+       0.005 s    0.3%  simulate.py:423 dot_general [dot]
+       0.004 s    0.3%  simulate.py:323 while [while]
+       0.003 s    0.2%  simulate.py:354 broadcast_in_dim [fusion]
+       0.003 s    0.2%  components.py:1184 asin [fusion]
+       0.003 s    0.2%  simulate.py:323 lu [custom-call]
+       0.001 s    0.1%  simulate.py:41 sort [sort]
+       0.001 s    0.1%  simulate.py:357 gather [fusion]
+
+GRADIENT: 3877 HLO lines | flops 2.986e+08 | bytes accessed 1.84 GiB
+  most frequent ops: parameter 1004, multiply 362, bitcast 213, broadcast 169, add 153, constant 102, pad 100, fusion 99, copy 77, negate 70
+  largest outputs:
+        181.0 MiB  parameter      ?
+        181.0 MiB  transpose      simulate.py:341 scatter-add
+        181.0 MiB  copy           simulate.py:341 scatter-add
+        181.0 MiB  broadcast      simulate.py:354 broadcast_in_dim
+        181.0 MiB  parameter      ?
+        181.0 MiB  select         simulate.py:354 select_n
+        181.0 MiB  select         simulate.py:354 select_n
+        181.0 MiB  complex        simulate.py:354 complex
+        181.0 MiB  add            simulate.py:354 add_any
+        181.0 MiB  broadcast      simulate.py:354 broadcast_in_dim
+        181.0 MiB  parameter      ?
+        181.0 MiB  select         simulate.py:354 select_n
+  measured time by source line:
+    matched XLA op time: 0.214 s
+       0.066 s   31.1%  ? simulation_pullback[1][384] [copy]
+       0.030 s   13.8%  simulate.py:42 triangular_solve [custom-call]
+       0.027 s   12.6%  simulate.py:344 select_n [fusion]
+       0.026 s   12.2%  simulate.py:48 triangular_solve [custom-call]
+       0.018 s    8.5%  simulate.py:423 dot_general [dot]
+       0.016 s    7.5%  simulate.py:42 while [while]
+       0.013 s    5.9%  simulate.py:356 pad [fusion]
+       0.005 s    2.3%  ? [copy]
+       0.002 s    0.9%  simulate.py:357 scatter [fusion]
+       0.002 s    0.9%  ? [fusion]
+       0.002 s    0.9%  simulate.py:357 gather [fusion]
+       0.002 s    0.8%  simulate.py:48 sort [sort]
+       0.001 s    0.6%  simulate.py:357 squeeze [fusion]
+       0.001 s    0.3%  simulate.py:42 add [fusion]
+       0.000 s    0.2%  ? simulation_pullback[1][109] [copy]
+       0.000 s    0.1%  simulate.py:323 triangular_solve [custom-call]
+       0.000 s    0.1%  components.py:909 add_any [fusion]
+       0.000 s    0.1%  simulate.py:356 add_any [fusion]
+       0.000 s    0.1%  simulate.py:135 broadcast_in_dim [fusion]
+       0.000 s    0.1%  simulate.py:136 select_n [fusion]
