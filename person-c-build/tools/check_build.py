@@ -1,11 +1,9 @@
 """Compare every array produced by the build step: ORIGINAL simulator vs CURRENT one.
 
-The original code lives in a git worktree at the baseline commit:
-    git worktree add ../reference-differometor 02ec741
+Pass the folder of the ORIGINAL simulator as --reference and the one to check as --current.
 
 Usage:
-    python tools/check_build.py                  # compare ../reference-differometor vs this repo
-    python tools/check_build.py --reference PATH
+    python tools/check_build.py --reference ../start-hack-munich-2026 --current ../combined-four-20261121-184759
 
 Each side runs in its own subprocess (the build keeps global state in
 LINKING_FUNCTIONS, and each side must import its own `differometor`).
@@ -114,7 +112,7 @@ def worker(repo, output):
     np.savez(output, **arrays)
 
 
-def compare(reference_file, current_file):
+def compare(reference_file, current_file, reference_repo=None):
     import numpy as np
     # Load fully into memory so Windows can delete the temporary files afterwards.
     with np.load(reference_file, allow_pickle=False) as file:
@@ -161,24 +159,29 @@ def compare(reference_file, current_file):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--reference", type=Path, default=HERE.parent / "reference-differometor")
+    parser.add_argument("--reference", type=Path, help="folder with the ORIGINAL (or older) simulator, e.g. ../start-hack-munich-2026")
+    parser.add_argument("--current", type=Path, help="folder with the simulator to check, e.g. combined-four-.../")
     parser.add_argument("--worker", nargs=2, metavar=("REPO", "OUTPUT"), help=argparse.SUPPRESS)
     args = parser.parse_args()
     if args.worker:
         worker(Path(args.worker[0]), args.worker[1])
         return
+    if args.reference is None or args.current is None:
+        parser.error("both --reference and --current are required")
     if not (args.reference / "differometor").is_dir():
-        parser.error(f"No reference checkout at {args.reference}. Run: git worktree add ../reference-differometor 02ec741")
+        parser.error(f"No differometor/ folder in {args.reference}")
+    if not (args.current / "differometor").is_dir():
+        parser.error(f"No differometor/ folder in {args.current}")
     with tempfile.TemporaryDirectory() as temporary:
         files = []
-        for label, repo in (("reference", args.reference), ("current", HERE)):
+        for label, repo in (("reference", args.reference), ("current", args.current)):
             output = os.path.join(temporary, label + ".npz")
             # Run from the temp dir so neither repo shadows the other. build() iterates a set of
             # port-name strings, so a fixed hash seed is needed for a deterministic entry order.
             environment = dict(os.environ, PYTHONHASHSEED="0")
             subprocess.run([sys.executable, str(Path(__file__).resolve()), "--worker", str(repo.resolve()), output], check=True, cwd=temporary, env=environment)
             files.append(output)
-        sys.exit(0 if compare(*files) else 1)
+        sys.exit(0 if compare(*files, reference_repo=args.reference) else 1)
 
 
 if __name__ == "__main__":

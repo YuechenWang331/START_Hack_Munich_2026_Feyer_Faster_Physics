@@ -4,8 +4,8 @@ Runs the same cases with ../reference-differometor (baseline commit) and with th
 repo, each in its own subprocess, then compares carrier, signal, noise,
 sensitivity, loss and gradient.
 
-    python tools/check_outputs.py                 # fixture forward-only + small setups with gradients
-    python tools/check_outputs.py --fixture-gradient   # also the fixture gradient (needs ~15 GB RAM)
+    python tools/check_outputs.py --reference ORIGINAL --current NEW                     # fixture forward + small setups with gradients
+    python tools/check_outputs.py --reference ORIGINAL --current NEW --fixture-gradient  # also the fixture gradient (lots of RAM)
 
 The fixture sensitivity is also checked against the public reference with the
 official rule abs(ln S - ln S_ref) <= 1e-5.
@@ -96,7 +96,7 @@ def worker(repo, output, fixture_gradient):
     np.savez(output, **results)
 
 
-def compare(reference_file, current_file):
+def compare(reference_file, current_file, reference_repo=None):
     import json
     import numpy as np
     with np.load(reference_file) as file:
@@ -124,9 +124,19 @@ def compare(reference_file, current_file):
         abs_err = float(diff.max()) if diff.size else 0.0
         rel_err = float((diff / np.where(scale == 0, 1, scale)).max()) if diff.size else 0.0
         flag = "" if finite_b.all() else ("  non-finite in BOTH (degenerate setup)" if same_pattern else "  NEW NON-FINITE")
-        ok &= same_pattern and rel_err <= (1e-8 if key.endswith("gradient") else 1e-10)
+        if key.endswith("gradient") and mask.all() and a.size:
+            rel_err_for_pass = float(np.linalg.norm(a - b) / max(np.linalg.norm(a), 1e-300))
+        else:
+            rel_err_for_pass = rel_err
+        ok &= same_pattern and rel_err_for_pass <= (1e-8 if key.endswith("gradient") else 1e-10)
         print(f"{key:36s} {str(a.shape):>12s} {str(same):>9s} {abs_err:12.3e} {rel_err:12.3e}{flag}")
-    public = json.loads((HERE / "examples/data/uifo_800_3000_test_data.json").read_text())
+        if key.endswith("gradient") and mask.all() and not same:
+            # Element-wise relative error explodes for entries near zero; the norm-wise error does not.
+            norm_err = float(np.linalg.norm(a - b) / max(np.linalg.norm(a), 1e-300))
+            print(f"{'':36s} norm-wise |g_new - g_ref| / |g_ref| = {norm_err:.3e}   (|g_ref| = {np.linalg.norm(a):.3e})")
+            for i in np.argsort(-np.abs(a - b))[:3]:
+                print(f"{'':36s}   worst index {i}: ref {a[i]: .6e}  new {b[i]: .6e}")
+    public = json.loads((reference_repo / "examples/data/uifo_800_3000_test_data.json").read_text())
     log_error = np.abs(np.log(current["uifo_800_3000.sensitivity"]) - np.log(np.asarray(public["sensitivities"])))
     sensitivity_ok = bool((current["uifo_800_3000.sensitivity"] > 0).all() and log_error.max() <= 1e-5)
     print(f"\nfixture vs public reference: max |ln S - ln S_ref| = {log_error.max():.3e} (limit 1e-5) -> {'OK' if sensitivity_ok else 'FAIL'}")
@@ -137,25 +147,30 @@ def compare(reference_file, current_file):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--reference", type=Path, default=HERE.parent / "reference-differometor")
+    parser.add_argument("--reference", type=Path, help="folder with the ORIGINAL (or older) simulator, e.g. ../start-hack-munich-2026")
+    parser.add_argument("--current", type=Path, help="folder with the simulator to check, e.g. combined-four-.../")
     parser.add_argument("--fixture-gradient", action="store_true", help="also differentiate the full fixture (~15 GB RAM)")
     parser.add_argument("--worker", nargs=2, metavar=("REPO", "OUTPUT"), help=argparse.SUPPRESS)
     args = parser.parse_args()
     if args.worker:
         worker(Path(args.worker[0]), args.worker[1], args.fixture_gradient)
         return
+    if args.reference is None or args.current is None:
+        parser.error("both --reference and --current are required")
     if not (args.reference / "differometor").is_dir():
-        parser.error(f"No reference checkout at {args.reference}. Run: git worktree add ../reference-differometor 02ec741")
+        parser.error(f"No differometor/ folder in {args.reference}")
+    if not (args.current / "differometor").is_dir():
+        parser.error(f"No differometor/ folder in {args.current}")
     with tempfile.TemporaryDirectory() as temporary:
         files = []
-        for label, repo in (("reference", args.reference), ("current", HERE)):
+        for label, repo in (("reference", args.reference), ("current", args.current)):
             output = os.path.join(temporary, label + ".npz")
             command = [sys.executable, str(Path(__file__).resolve()), "--worker", str(repo.resolve()), output]
             if args.fixture_gradient:
                 command.append("--fixture-gradient")
             subprocess.run(command, check=True, cwd=temporary, env=dict(os.environ, PYTHONHASHSEED="0"))
             files.append(output)
-        sys.exit(0 if compare(*files) else 1)
+        sys.exit(0 if compare(*files, reference_repo=args.reference) else 1)
 
 
 if __name__ == "__main__":
