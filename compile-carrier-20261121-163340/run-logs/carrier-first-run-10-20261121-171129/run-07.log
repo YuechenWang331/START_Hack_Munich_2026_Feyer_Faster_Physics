@@ -1,0 +1,35 @@
+Initialize CPU backend: 0.004751 s
+CPU: Apple M4; affinity: unknown; devices: [CpuDevice(id=0)]
+Read and parse public inputs: 0.002770 s
+Build optical setup and prepare inputs: 0.783906 s
+Workload: 101 frequencies; 193 physical design variables; no optimizer
+Forward: trace / lower: 1.081471 s
+Forward: compile: 3.645572 s
+Forward simulation + AD residuals: 7.258600 s
+Sensitivity: trace / lower: 0.065598 s
+Sensitivity: compile: 0.064951 s
+Sensitivity, powers and scalar loss: 0.000647 s
+Gradient: trace / lower: 0.257324 s
+Gradient: compile: 2.109860 s
+Reverse-mode gradient: 3.634955 s
+Transfer results to host: 0.017223 s
+Complete first-run total (excluding validation): 19.374522 s
+Forward: 6.492591 s
+Sensitivity: 0.012331 s
+Gradient: 3.644578 s
+Host transfer: 0.032663 s
+Repeat 01/3: 10.182163 s
+Forward: 6.704789 s
+Sensitivity: 0.013113 s
+Gradient: 3.599482 s
+Host transfer: 0.024605 s
+Repeat 02/3: 10.341988 s
+Forward: 6.660852 s
+Sensitivity: 0.011628 s
+Gradient: 6.566253 s
+Host transfer: 0.022522 s
+Repeat 03/3: 13.261255 s
+Validating outputs, reference sensitivity and finite-difference gradient...
+PASS: reference sensitivity and gradient spot check; full runtime median 10.341988 s
+JSON: /Users/yuechen/Desktop/START_Hack_Munich_2026_Feyer_Faster_Physics/compile-carrier-20261121-163340/run-logs/carrier-first-run-10-20261121-171129/run-07.json
+Plot: /Users/yuechen/Desktop/START_Hack_Munich_2026_Feyer_Faster_Physics/compile-carrier-20261121-163340/run-logs/carrier-first-run-10-20261121-171129/run-07.png
