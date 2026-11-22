@@ -1,0 +1,20 @@
+
+=== Summary: 10 independent first runs, no added pause ===
+Run 1: 2.153742 s
+Run 2: 1.550016 s
+Run 3: 1.536414 s
+Run 4: 1.672741 s
+Run 5: 1.558177 s
+Run 6: 1.506349 s
+Run 7: 1.523663 s
+Run 8: 1.436864 s
+Run 9: 1.524011 s
+Run 10: 1.545512 s
+Mean: 1.600749 s
+Median: 1.540963 s
+Sample SD: 0.202803 s
+Sample variance: 0.041129 s^2
+Min: 1.436864 s
+Max: 2.153742 s
+PASS: all 10 runs passed.
+Results saved to: /Users/yuechen/Desktop/feyer-five-isolated/combined-four-20261121-184759/run-logs/host-components5-first-10-no-pause-jfgdl7ff

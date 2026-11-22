@@ -1,0 +1,10 @@
+.DS_Store
+__pycache__/
+*.py[cod]
+.venv/
+*.egg-info/
+build/
+dist/
+run-logs/
+benchmark3.json
+benchmark3.png

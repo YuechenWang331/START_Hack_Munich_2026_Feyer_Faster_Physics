@@ -1,5 +1,0 @@
-Initialize CPU backend: 0.005754 s
-CPU: Apple M4; affinity: unknown; devices: [CpuDevice(id=0)]
-Read and parse public inputs: 0.002536 s
-Build optical setup and prepare inputs: 0.068262 s
-Workload: 101 frequencies; 193 physical design variables; no optimizer

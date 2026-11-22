@@ -1,0 +1,20 @@
+{
+  "source_branch": "experiment/host-components5",
+  "source_commit": "00045c689508bb8ebc026df4241193316b45b384",
+  "quan_base_commit": "ac2357145a8d8fe0711e66f1a884289d9d0f5225",
+  "note": "Code and fixtures copied without numerical changes. Paths flattened to repository root. Default XLA.",
+  "sha256": {
+    "benchmark.py": "3c451203bc4b2b86148c0537104898191a038ad90aaa08577c8406f812cb3dc2",
+    "differometor/__init__.py": "ee998e325d47d1376345989a046161de5df06c618aa011893fc2eaa5ce38e4ff",
+    "differometor/build.py": "a548d5a99ac0c509abb39fb287e9ed838e2c12897e2d0847bbe57be803744fec",
+    "differometor/carrier_solve.py": "231169983bfad15125f909cbd566b465c1a9eb6890d8e42e94abacf1cb3d5892",
+    "differometor/components.py": "2e857e19d468d94b46594f71a76221d9d8b677bad05f6cf03b9e57b0e1613593",
+    "differometor/host_components.py": "4df45b33c1ce22c8e8ee59b37020849fa0482ba31d23177678184fa37f1d38c7",
+    "differometor/plot.py": "16735e0fb14902f2c024e3da9f2655cbea634c4dd9e06c48af1247e12d0cf606",
+    "differometor/setups.py": "478b1a7391b28604c36d8245e13ffa4f6d0f6dc32eeac6c6feaf5c08aa06a76b",
+    "differometor/simulate.py": "d5d2974f90a1bf8e0b22dd4f7721c0308b162effda039c7531a4e6a987ccb2b3",
+    "differometor/sparse_signal.py": "156e45e2b968f86947e3cba39d8f61e22c6fec5557f32412aa52de89d754f5ff",
+    "differometor/sparse_solve.py": "7e6836656dd0bd14e40be8e26cd19c7d626a4b5d195f181f439dd1555791b75c",
+    "differometor/utils.py": "73ee8a862cbc435363904addc363071ed7dc8b1546956f82e1746998fe3b09ff"
+  }
+}
