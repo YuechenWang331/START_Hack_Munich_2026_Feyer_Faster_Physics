@@ -55,17 +55,10 @@ repository.
 
 ### Official benchmark check
 
-The official `benchmark.py` from the starter repository (unchanged since commit
-`02ec741`) was run on this simulator on an Intel i7 laptop (Windows, CPU only):
-
-- **PASS**: outputs and gradients finite, maximum absolute log-sensitivity
-  error 5.4e-6 (limit 1e-5), finite-difference gradient check passed.
-- Complete first run: 3.14 s (7.96 s on the very first launch, before the
-  operating system had cached the libraries). One check, not a timed series.
-
-The official benchmark compiles forward, sensitivity and gradient as three
-separate executables, so its first run is slower than with this repository's
-`benchmark.py` (see item 6 below).
+The simulator also runs with the official, unmodified `benchmark.py` from the
+challenge starter repository and passes all its checks: outputs and gradients
+are finite, the maximum log-sensitivity error is 5.4e-6 (limit 1e-5), and the
+finite-difference gradient check passes.
 
 ## What we changed (short version)
 
