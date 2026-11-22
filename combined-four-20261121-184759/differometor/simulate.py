@@ -20,12 +20,12 @@ Conventions used throughout:
 import jax
 from time import time
 import jax.numpy as jnp
-from jax.scipy.linalg import lu_factor, lu_solve
 from jax import lax, vmap, jit
 
 from differometor.setups import Setup
 from differometor.build import build, pairs_to_arrays, prepare_arrays, to_value_systems, LINKING_FUNCTIONS
 from differometor.components import FUNCTIONS, UNIT_VACUUM, H_PLANCK, F0
+from differometor.sparse_solve import signal_solves
 
 
 jax.config.update("jax_enable_x64", True)
@@ -36,31 +36,6 @@ def _sparse_matvec(values, rows, columns, size, x):
     """A @ x for a matrix given by its non-zero `values` at (`rows`, `columns`); x is (size,) or (size, k)."""
     products = values.reshape(values.shape + (1,) * (x.ndim - 1)) * x[columns]
     return jax.ops.segment_sum(products, rows, num_segments=size)
-
-
-def _solve_with_factors(values, rows, columns, factors, rhs, *, adjoint=False):
-    """
-    Solve A x = b (or A^H x = b) reusing one LU factorisation of A.
-
-    `custom_linear_solve` differentiates only through `matvec`. Because `matvec` is
-    written with the non-zero `values` of A, the gradient with respect to A is one
-    number per non-zero entry instead of a dense N x N matrix, and the AD tape keeps
-    the LU factors rather than dense copies of A.
-    """
-    size = rhs.shape[0]
-    if adjoint:
-        return lax.custom_linear_solve(
-            lambda y: _sparse_matvec(jnp.conj(values), columns, rows, size, y),
-            rhs,
-            solve=lambda _, b: lu_solve(factors, b, trans=2),
-            transpose_solve=lambda _, b: jnp.conj(lu_solve(factors, jnp.conj(b))),
-        )
-    return lax.custom_linear_solve(
-        lambda x: _sparse_matvec(values, rows, columns, size, x),
-        rhs,
-        solve=lambda _, b: lu_solve(factors, b),
-        transpose_solve=lambda _, b: lu_solve(factors, b, trans=1),
-    )
 
 
 def solve(matrix: jnp.ndarray, right_hand_side: jnp.ndarray) -> jnp.ndarray:
@@ -383,17 +358,8 @@ def simulate(
 
     system_values = values[:, system_slots]
     rhs = jnp.zeros((frequency_count, system_size), dtype=values.dtype).at[:, rhs_rows].set(values[:, rhs_slots])
-
-    # Dense copy only for the LU factorisation; no gradient flows through it.
-    dense_system = (
-        jnp.zeros((frequency_count, system_size, system_size), dtype=values.dtype)
-        .at[:, system_rows, system_columns]
-        .set(lax.stop_gradient(system_values))
-    )
-    factors = vmap(lu_factor)(dense_system)
-    signal = vmap(_solve_with_factors, in_axes=(0, None, None, 0, 0))(
-        system_values, system_rows, system_columns, factors, rhs
-    )
+    # The signal system is solved below, together with the detector-weight system,
+    # so that both share one sparse LU factorisation per frequency.
 
     # --------------------
     # Quantum noise solve
@@ -428,9 +394,9 @@ def simulate(
         (carrier_selections.shape[0], frequency_count, carrier_selections.shape[2]),
     )
     rhs_columns = jnp.moveaxis(carrier_selections, 0, -1)
-    weight_columns = vmap(
-        lambda v, f, b: _solve_with_factors(v, system_rows, system_columns, f, b, adjoint=True)
-    )(system_values, factors, rhs_columns)
+    # One sparse LU per frequency (SciPy SuperLU) solves A x = rhs (signal) and
+    # A^H W = C (detector weights); its exact gradient is supplied by a custom VJP.
+    signal, weight_columns = signal_solves(system_values, rhs, rhs_columns, system_rows, system_columns)
     noise_weights = jnp.moveaxis(weight_columns, -1, 0)
 
     # Update noise source matrix (may depend on current parameters), also as non-zero values.
