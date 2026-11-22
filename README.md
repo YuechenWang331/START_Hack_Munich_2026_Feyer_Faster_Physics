@@ -154,8 +154,8 @@ Since $A_f^H w_f=c_f$, taking the conjugate transpose gives
 $w_f^H=c_f^H A_f^{-1}$. The detector's noise power therefore satisfies
 
 $$
-\operatorname{Re}(c_f^H A_f^{-1} Q_f w_f)
-= \operatorname{Re}(w_f^H Q_f w_f).
+\mathrm{Re}(c_f^H A_f^{-1} Q_f w_f)
+= \mathrm{Re}(w_f^H Q_f w_f).
 $$
 
 `simulate._sparse_matvec` forms $Q_f w_f$ from the stored noise entries,
@@ -166,7 +166,7 @@ to convert power to amplitude spectral density.
 
 ### 4. Differentiate the linear equations implicitly
 
-Differentiating $Ax=b$ gives $A\,dx=db-(dA)x$. For a scalar loss, reverse mode
+Differentiating $Ax=b$ gives $A \mathrm{d}x = \mathrm{d}b - (\mathrm{d}A) x$. For a scalar loss, reverse mode
 can use a transposed solve to propagate the derivative to the inputs. The dense
 carrier solver saves its matrix and solution. Given the incoming derivative
 $g$, it solves $A^T p=g$ and returns $p$ for the right-hand side and
@@ -191,9 +191,9 @@ callbacks, keeping their internal operations out of the graph XLA compiles.
 
 The NumPy version must give the same values as the original complex JAX
 formulas. One formula needed care: the transmitted angle uses
-$\cos(\arcsin z)$, and with total internal reflection $|z| > 1$. A real
+$\cos(\arcsin(z))$, and with total internal reflection $\lvert z \rvert > 1$. A real
 `arcsin` would return NaN there, so the code uses the complex continuation
-$-i\,\operatorname{sign}(z)\sqrt{z^2-1}$, which is what JAX computes on complex
+$-i \cdot \mathrm{sign}(z) \sqrt{z^2-1}$, which is what JAX computes on complex
 inputs, together with the matching derivative.
 
 At the benchmark level (this repository's `benchmark.py`, not the simulator),
