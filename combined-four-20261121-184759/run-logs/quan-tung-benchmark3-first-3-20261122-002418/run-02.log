@@ -1,0 +1,14 @@
+Initialize CPU backend: 0.013407 s
+CPU: Apple M4; affinity: unknown; devices: [CpuDevice(id=0)]
+Read and parse public inputs: 0.003130 s
+Build optical setup and prepare inputs: 0.187648 s
+Workload: 101 frequencies; 193 physical design variables; no optimizer
+Fused evaluation + gradient: trace / lower: 0.910774 s
+Fused evaluation + gradient: compile: 2.559478 s
+Forward + readout + gradient: 2.795965 s
+Transfer results to host: 0.003197 s
+Complete first-run total (excluding validation): 7.177333 s
+Validating outputs, reference sensitivity and finite-difference gradient...
+PASS: reference sensitivity and gradient spot check; first-run total 7.177333 s
+JSON: /Users/yuechen/Desktop/START_Hack_Munich_2026_Feyer_Faster_Physics/combined-four-20261121-184759/run-logs/quan-tung-benchmark3-first-3-20261122-002418/run-02.json
+Plot: /Users/yuechen/Desktop/START_Hack_Munich_2026_Feyer_Faster_Physics/combined-four-20261121-184759/run-logs/quan-tung-benchmark3-first-3-20261122-002418/run-02.png

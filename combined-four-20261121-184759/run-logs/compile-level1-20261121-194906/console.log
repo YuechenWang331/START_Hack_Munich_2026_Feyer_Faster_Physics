@@ -1,0 +1,20 @@
+Initialize CPU backend: 0.014084 s
+CPU: Apple M4; affinity: unknown; devices: [CpuDevice(id=0)]
+Read and parse public inputs: 0.002996 s
+Build optical setup and prepare inputs: 0.199289 s
+Workload: 101 frequencies; 193 physical design variables; no optimizer
+Forward: trace / lower: 1.253659 s
+Forward: compile: 3.651778 s
+Forward simulation + AD residuals: 7.648327 s
+Sensitivity: trace / lower: 0.083802 s
+Sensitivity: compile: 0.065145 s
+Sensitivity, powers and scalar loss: 0.000497 s
+Gradient: trace / lower: 0.306002 s
+Gradient: compile: 2.503679 s
+Reverse-mode gradient: 1.916461 s
+Transfer results to host: 0.016686 s
+Complete first-run total (excluding validation): 18.414016 s
+Validating outputs, reference sensitivity and finite-difference gradient...
+PASS: reference sensitivity and gradient spot check; first-run total 18.414016 s
+JSON: run-logs/compile-level1-20261121-194906/result.json
+Plot: run-logs/compile-level1-20261121-194906/result.png

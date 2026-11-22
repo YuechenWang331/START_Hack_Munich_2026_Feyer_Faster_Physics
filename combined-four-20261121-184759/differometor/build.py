@@ -105,6 +105,157 @@ def _device_array(value, dtype=None) -> jnp.ndarray:
     return jnp.asarray(np.asarray(value, dtype=dtype))
 
 
+def _group_by_function(function_input_indices, function_indices, output_indices):
+    """
+    Regroup component-function calls by function type, at build time.
+
+    `simulate.update` used to evaluate `lax.switch(FUNCTIONS)` for every call. Under
+    `vmap` that evaluates all 19 component functions for every matrix entry, which makes
+    the forward and gradient programs (and their compile times) large. Grouping lets
+    `update` evaluate each function once, vectorised over only its own calls.
+
+    Parameters
+    ----------
+    function_input_indices:
+        Array `(K, W)`: parameter indices for each of the K function calls.
+    function_indices:
+        Length-K sequence: index into `FUNCTIONS` for each call.
+    output_indices:
+        Array `(2, M)`: (call row, output column) of each value written to the matrix.
+
+    Returns
+    -------
+    grouped_inputs:
+        Tuple with one `(K_f, W)` index array per entry of `FUNCTIONS` (empty if unused).
+    grouped_rows:
+        Tuple with the original call numbers of each group (bookkeeping/checks only).
+    output_indices:
+        Copy of `output_indices` with call rows renumbered to the grouped order
+        (groups concatenated in `FUNCTIONS` order).
+    """
+    function_input_indices = np.asarray(function_input_indices, dtype=np.int64)
+    function_indices = np.asarray(function_indices, dtype=np.int64).reshape(-1)
+    output_indices = np.asarray(output_indices).astype(np.int64)
+    assert len(function_indices) == len(function_input_indices), "one function per call row expected"
+    assert output_indices[0].max(initial=0) < len(function_indices), "output row outside the function calls"
+
+    rows_per_function = [np.flatnonzero(function_indices == f) for f in range(len(FUNCTIONS))]
+    new_position = np.empty(len(function_indices), dtype=np.int64)
+    new_position[np.concatenate(rows_per_function)] = np.arange(len(function_indices))
+    remapped = output_indices.copy()
+    remapped[0] = new_position[output_indices[0]]
+
+    width = function_input_indices.shape[1]
+    grouped_inputs = tuple(_device_array(function_input_indices[rows].reshape(-1, width), dtype=np.int64) for rows in rows_per_function)
+    grouped_rows = tuple(_device_array(rows, dtype=np.int64) for rows in rows_per_function)
+    return grouped_inputs, grouped_rows, remapped
+
+
+# ---------------------------------------------------------------------
+# Signal and noise systems as lists of non-zero values (Idea B)
+# ---------------------------------------------------------------------
+# The signal matrix is ~99.7 % zeros. Working on a dense (frequencies, N, N + 1) stack
+# makes the forward pass move mostly zeros through memory and makes the AD tape keep
+# several dense copies. Instead, `simulate` keeps one complex value per position that
+# can ever be non-zero. The positions are derived here from the starting matrix and
+# the update instructions of THIS setup, so nothing depends on a particular fixture.
+
+
+def _normalised_positions(indices, shape):
+    """Index pair (rows, cols) -> non-negative positions, like NumPy/JAX indexing (-1 = last)."""
+    rows = np.asarray(indices[0], dtype=np.int64).reshape(-1)
+    cols = np.asarray(indices[1], dtype=np.int64).reshape(-1)
+    assert np.all((rows >= -shape[0]) & (rows < shape[0])), "row index outside the matrix"
+    assert np.all((cols >= -shape[1]) & (cols < shape[1])), "column index outside the matrix"
+    return rows % shape[0], cols % shape[1]
+
+
+def _value_layout(matrix, *index_pairs, with_diagonal=False):
+    """
+    Sorted (row, col) of every position that is non-zero in `matrix` or written by any
+    of `index_pairs`, plus a function mapping (rows, cols) to slots in that list.
+    """
+    matrix = np.asarray(matrix)
+    nonzero_rows, nonzero_cols = np.nonzero(matrix)
+    rows = [nonzero_rows]
+    cols = [nonzero_cols]
+    if with_diagonal:
+        rows.append(np.arange(min(matrix.shape)))
+        cols.append(np.arange(min(matrix.shape)))
+    for pair in index_pairs:
+        pair_rows, pair_cols = _normalised_positions(pair, matrix.shape)
+        rows.append(pair_rows)
+        cols.append(pair_cols)
+    width = matrix.shape[1]
+    keys = np.unique(np.concatenate(rows) * width + np.concatenate(cols))
+    layout_rows, layout_cols = np.divmod(keys, width)
+
+    def slots(pair):
+        pair_rows, pair_cols = _normalised_positions(pair, matrix.shape)
+        return np.searchsorted(keys, pair_rows * width + pair_cols)
+
+    return layout_rows, layout_cols, slots
+
+
+def to_value_systems(simulation_arrays: dict, carrier_size: int) -> dict:
+    """
+    Replace the dense signal and noise matrices of `run_build_step`'s output by their
+    non-zero values (same argument names, so `simulate`'s signature is unchanged).
+
+    signal_matrix  -> (base_values, conjugate, system_slots, system_rows, system_columns,
+                       rhs_slots, rhs_rows)
+        base_values      (nnz,)  starting value at every possible non-zero position of the
+                                 augmented matrix (N, N + 1); column N is the right-hand side
+        conjugate        (nnz,)  True where the lower-sideband conjugation applies
+        system_slots     slots with column < N, and their (row, column) in the N x N system
+        rhs_slots        slots in the right-hand-side column, and their rows
+    signal_matrix_indices           -> (slots,) where each update output is written
+    signal_carrier_placing_indices  -> (slots,) of the entries scaled by the carrier
+    noise_matrix   -> (base_values, rows, columns)
+    noise_system_matrix_indices     -> (slots,)
+    """
+    arrays = dict(simulation_arrays)
+
+    signal_matrix = np.asarray(arrays["signal_matrix"])
+    system_size = signal_matrix.shape[0]
+    rows, cols, slots = _value_layout(
+        signal_matrix,
+        np.asarray(arrays["signal_matrix_indices"]),
+        np.asarray(arrays["signal_carrier_placing_indices"]),
+        with_diagonal=True,
+    )
+    # Same rule as the dense conjugation in simulate(): lower-sideband rows from column n on,
+    # and the signal rows over the upper-sideband columns (column N, the RHS, counts as >= n).
+    lower = (rows >= carrier_size) & (rows < 2 * carrier_size)
+    conjugate = (lower & (cols >= carrier_size)) | ((rows >= 2 * carrier_size) & (cols < carrier_size))
+    in_system = cols < system_size
+    arrays["signal_matrix"] = (
+        _device_array(signal_matrix[rows, cols], dtype=np.complex128),
+        _device_array(conjugate, dtype=bool),
+        _device_array(np.flatnonzero(in_system), dtype=np.int64),
+        _device_array(rows[in_system], dtype=np.int64),
+        _device_array(cols[in_system], dtype=np.int64),
+        _device_array(np.flatnonzero(~in_system), dtype=np.int64),
+        _device_array(rows[~in_system], dtype=np.int64),
+    )
+    arrays["signal_matrix_indices"] = _device_array(slots(np.asarray(arrays["signal_matrix_indices"])), dtype=np.int64)
+    arrays["signal_carrier_placing_indices"] = _device_array(
+        slots(np.asarray(arrays["signal_carrier_placing_indices"])), dtype=np.int64
+    )
+
+    noise_matrix = np.asarray(arrays["noise_matrix"])
+    noise_rows, noise_cols, noise_slots = _value_layout(noise_matrix, np.asarray(arrays["noise_system_matrix_indices"]))
+    arrays["noise_matrix"] = (
+        _device_array(noise_matrix[noise_rows, noise_cols], dtype=np.complex128),
+        _device_array(noise_rows, dtype=np.int64),
+        _device_array(noise_cols, dtype=np.int64),
+    )
+    arrays["noise_system_matrix_indices"] = _device_array(
+        noise_slots(np.asarray(arrays["noise_system_matrix_indices"])), dtype=np.int64
+    )
+    return arrays
+
+
 def _reshape_to_row(values):
     """`values.reshape(1, -1)` on the host when that cannot change the result's JAX type."""
     if isinstance(values, jax.Array) and not values.weak_type:
@@ -1733,16 +1884,17 @@ def pairs_to_arrays(
         """
         if len(arrays["function_input_indices"]) == 0:
             # Dummy update that leaves matrices unchanged.
-            return (
-                _device_array([[0, 0, 0]]),
-                _device_array([FUNCTIONS.index(dummy_function)]),
-                _device_array([[0], [0]]),
-                _device_array([[0], [0]]),
+            grouped_inputs, grouped_rows, output_indices = _group_by_function(
+                np.array([[0, 0, 0]]), [FUNCTIONS.index(dummy_function)], np.array([[0], [0]])
             )
+            return (grouped_inputs, grouped_rows, _device_array(output_indices, dtype=int), _device_array([[0], [0]]))
 
         function_input_indices = np.vstack(arrays["function_input_indices"])
         output_indices = np.stack((np.concatenate(arrays["output_row_indices"]), np.concatenate(arrays["output_column_indices"])))
         system_matrix_indices = np.stack((np.concatenate(arrays["system_matrix_row_indices"]), np.concatenate(arrays["system_matrix_column_indices"])))
+        grouped_inputs, grouped_rows, output_indices = _group_by_function(
+            function_input_indices, arrays["function_indices"], output_indices
+        )
 
         if signal:
             # Dummy carrier coupling values if none are required.
@@ -1756,8 +1908,8 @@ def pairs_to_arrays(
                 )
 
             return (
-                _device_array(function_input_indices, dtype=int),
-                _device_array(arrays["function_indices"], dtype=int),
+                grouped_inputs,
+                grouped_rows,
                 _device_array(output_indices, dtype=int),
                 _device_array(system_matrix_indices, dtype=int),
                 _device_array(carrier_solution_indices, dtype=int),
@@ -1765,8 +1917,8 @@ def pairs_to_arrays(
             )
 
         return (
-            _device_array(function_input_indices, dtype=int),
-            _device_array(arrays["function_indices"], dtype=int),
+            grouped_inputs,
+            grouped_rows,
             _device_array(output_indices, dtype=int),
             _device_array(system_matrix_indices, dtype=int),
         )

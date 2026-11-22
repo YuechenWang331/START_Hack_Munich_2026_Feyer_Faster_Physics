@@ -24,7 +24,7 @@ from jax.scipy.linalg import lu_factor, lu_solve
 from jax import lax, vmap, jit
 
 from differometor.setups import Setup
-from differometor.build import build, pairs_to_arrays, prepare_arrays, LINKING_FUNCTIONS
+from differometor.build import build, pairs_to_arrays, prepare_arrays, to_value_systems, LINKING_FUNCTIONS
 from differometor.components import FUNCTIONS, UNIT_VACUUM, H_PLANCK, F0
 
 
@@ -32,17 +32,31 @@ jax.config.update("jax_enable_x64", True)
 
 
 
-def _solve_with_factors(matrix, factors, rhs, *, adjoint=False):
-    """Reuse LU for the primal and implicit transpose solves."""
+def _sparse_matvec(values, rows, columns, size, x):
+    """A @ x for a matrix given by its non-zero `values` at (`rows`, `columns`); x is (size,) or (size, k)."""
+    products = values.reshape(values.shape + (1,) * (x.ndim - 1)) * x[columns]
+    return jax.ops.segment_sum(products, rows, num_segments=size)
+
+
+def _solve_with_factors(values, rows, columns, factors, rhs, *, adjoint=False):
+    """
+    Solve A x = b (or A^H x = b) reusing one LU factorisation of A.
+
+    `custom_linear_solve` differentiates only through `matvec`. Because `matvec` is
+    written with the non-zero `values` of A, the gradient with respect to A is one
+    number per non-zero entry instead of a dense N x N matrix, and the AD tape keeps
+    the LU factors rather than dense copies of A.
+    """
+    size = rhs.shape[0]
     if adjoint:
         return lax.custom_linear_solve(
-            lambda x: matrix.conj().T @ x,
+            lambda y: _sparse_matvec(jnp.conj(values), columns, rows, size, y),
             rhs,
             solve=lambda _, b: lu_solve(factors, b, trans=2),
             transpose_solve=lambda _, b: jnp.conj(lu_solve(factors, jnp.conj(b))),
         )
     return lax.custom_linear_solve(
-        lambda x: matrix @ x,
+        lambda x: _sparse_matvec(values, rows, columns, size, x),
         rhs,
         solve=lambda _, b: lu_solve(factors, b),
         transpose_solve=lambda _, b: lu_solve(factors, b, trans=1),
@@ -81,10 +95,10 @@ def solve(matrix: jnp.ndarray, right_hand_side: jnp.ndarray) -> jnp.ndarray:
 def update(
     parameters: jnp.ndarray,
     matrix: jnp.ndarray,
-    function_input_indices: jnp.ndarray,
+    function_input_indices: tuple[jnp.ndarray, ...],
     output_indices: tuple[jnp.ndarray, jnp.ndarray],
     matrix_indices: tuple[jnp.ndarray, jnp.ndarray],
-    function_indices: jnp.ndarray,
+    function_indices: tuple[jnp.ndarray, ...],
 ) -> jnp.ndarray:
     """
     Update selected entries of a system matrix by evaluating component functions.
@@ -100,18 +114,19 @@ def update(
     matrix : jnp.ndarray
         Base matrix to update, shape (N, N + 1) for augmented systems, or (N, N).
         The function writes entries in-place (functionally) using `.at[...].set(...)`.
-    function_input_indices : jnp.ndarray
-        Indices into `parameters` selecting inputs to the component functions,
-        shape (K,).
+    function_input_indices : tuple[jnp.ndarray, ...]
+        One entry per function in the global `FUNCTIONS` list: indices into
+        `parameters` for every call of that function, shape (K_f, W). Built by
+        `build._group_by_function`; unused functions have K_f = 0.
     output_indices : tuple[jnp.ndarray, jnp.ndarray]
-        Pair of index arrays selecting entries from the evaluated output matrix.
+        Pair of index arrays selecting entries from the evaluated output matrix,
+        whose rows are the calls of all groups concatenated in `FUNCTIONS` order.
         Each element has shape (M,). Together they define M output positions.
     matrix_indices : tuple[jnp.ndarray, jnp.ndarray]
         Pair of index arrays selecting where to write into `matrix`.
         Each element has shape (M,).
-    function_indices : jnp.ndarray
-        Indices selecting which function to use for each input, shape (K,).
-        Values index into the global `FUNCTIONS` list.
+    function_indices : tuple[jnp.ndarray, ...]
+        Original call numbers of each group (bookkeeping only, not used here).
 
     Returns
     -------
@@ -120,14 +135,29 @@ def update(
 
     Notes
     -----
-    `lax.switch` selects functions from the global `FUNCTIONS` list. In JAX, a
-    Python list of callables referenced as a global is treated as static during
-    tracing, which keeps the function jittable as long as the list is stable.
+    Each function is evaluated once, vectorised over only its own calls. The group
+    sizes are array shapes, so which functions run is fixed at trace time. (Before,
+    `vmap(lax.switch(FUNCTIONS))` evaluated all functions for every call, which made
+    the compiled forward and gradient programs several times larger.)
     """
-    function_inputs = parameters[function_input_indices]
-    output_matrix = vmap(lambda i, x: lax.switch(i, FUNCTIONS, x))(function_indices, function_inputs)
-    outputs = output_matrix[output_indices[0], output_indices[1]]
+    outputs = _component_outputs(parameters, function_input_indices, output_indices)
     return matrix.at[matrix_indices[0], matrix_indices[1]].set(outputs)
+
+
+def _component_outputs(parameters, function_input_indices, output_indices):
+    """Evaluate every component function once over its own calls; return the M written values."""
+    group_outputs = [
+        vmap(FUNCTIONS[function_id])(parameters[group_indices])
+        for function_id, group_indices in enumerate(function_input_indices)
+        if group_indices.shape[0] > 0
+    ]
+    output_matrix = jnp.concatenate(group_outputs, axis=0)
+    return output_matrix[output_indices[0], output_indices[1]]
+
+
+def update_values(parameters, values, function_input_indices, output_indices, value_slots, function_indices):
+    """Like `update`, but for a matrix stored as its non-zero values: write outputs into `value_slots`."""
+    return values.at[value_slots].set(_component_outputs(parameters, function_input_indices, output_indices))
 
 
 def expand_parameters(array: jnp.ndarray, indices: jnp.ndarray, values: jnp.ndarray) -> jnp.ndarray:
@@ -189,20 +219,20 @@ def simulate(
     linking_function_indices: jnp.ndarray,
     indices_to_link: jnp.ndarray,
     # carrier arrays
-    carrier_function_input_indices: jnp.ndarray,
-    carrier_function_indices: jnp.ndarray,
+    carrier_function_input_indices: tuple[jnp.ndarray, ...],
+    carrier_function_indices: tuple[jnp.ndarray, ...],
     carrier_output_indices: tuple[jnp.ndarray, jnp.ndarray],
     carrier_matrix_indices: tuple[jnp.ndarray, jnp.ndarray],
     # signal arrays
-    signal_function_input_indices: jnp.ndarray,
-    signal_function_indices: jnp.ndarray,
+    signal_function_input_indices: tuple[jnp.ndarray, ...],
+    signal_function_indices: tuple[jnp.ndarray, ...],
     signal_output_indices: tuple[jnp.ndarray, jnp.ndarray],
     signal_matrix_indices: tuple[jnp.ndarray, jnp.ndarray],
     signal_carrier_indices: jnp.ndarray,
     signal_carrier_placing_indices: tuple[jnp.ndarray, jnp.ndarray],
     # noise arrays
-    noise_function_input_indices: jnp.ndarray,
-    noise_function_indices: jnp.ndarray,
+    noise_function_input_indices: tuple[jnp.ndarray, ...],
+    noise_function_indices: tuple[jnp.ndarray, ...],
     noise_output_indices: tuple[jnp.ndarray, jnp.ndarray],
     noise_system_matrix_indices: tuple[jnp.ndarray, jnp.ndarray],
 ) -> tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]:
@@ -319,37 +349,51 @@ def simulate(
     # --------------------
     # Signal solve
     # --------------------
+    # The signal system is kept as its non-zero values (see build.to_value_systems):
+    # one complex number per position that can ever be non-zero, per frequency.
+    (
+        base_values,
+        conjugate,
+        system_slots,
+        system_rows,
+        system_columns,
+        rhs_slots,
+        rhs_rows,
+    ) = signal_matrix
+    system_size = noise_selection_vectors.shape[-1]
+
     parameters = expand_parameters(parameters, signal_changing_parameter_indices, signal_changing_values)
-    signal_matrix = vmap(update, in_axes=(0, None, None, None, None, None))(
+    values = vmap(update_values, in_axes=(0, None, None, None, None, None))(
         parameters,
-        signal_matrix,
+        base_values,
         signal_function_input_indices,
         signal_output_indices,
         signal_matrix_indices,
         signal_function_indices,
     )
+    frequency_count = values.shape[0]
 
     # Scale signal connector entries by the carrier solution at the respective spaces.
     # The minus sign matches the sign convention used by the referenced modeling tools.
-    signal_entries = (
-        -signal_matrix[:, signal_carrier_placing_indices[0], signal_carrier_placing_indices[1]]
-        * carrier[:, signal_carrier_indices.flatten()]
-    )
-    signal_matrix = signal_matrix.at[:, signal_carrier_placing_indices[0], signal_carrier_placing_indices[1]].set(
-        signal_entries
-    )
+    signal_entries = -values[:, signal_carrier_placing_indices] * carrier[:, signal_carrier_indices.flatten()]
+    values = values.at[:, signal_carrier_placing_indices].set(signal_entries)
 
-    # Apply conjugation rules to enforce upper and lower sideband symmetry.
-    carrier_size = carrier.shape[1]
-    row = jnp.arange(signal_matrix.shape[1])[:, None]
-    col = jnp.arange(signal_matrix.shape[2])[None, :]
-    lower = (row >= carrier_size) & (row < 2 * carrier_size)
-    conjugate = (lower & (col >= carrier_size)) | ((row >= 2 * carrier_size) & (col < carrier_size))
-    signal_matrix = jnp.where(conjugate, jnp.conj(signal_matrix), signal_matrix)
+    # Apply conjugation rules to enforce upper and lower sideband symmetry (mask built at build time).
+    values = jnp.where(conjugate, jnp.conj(values), values)
 
-    system = signal_matrix[:, :, :-1]
-    factors = vmap(lu_factor)(lax.stop_gradient(system))
-    signal = vmap(_solve_with_factors)(system, factors, signal_matrix[:, :, -1])
+    system_values = values[:, system_slots]
+    rhs = jnp.zeros((frequency_count, system_size), dtype=values.dtype).at[:, rhs_rows].set(values[:, rhs_slots])
+
+    # Dense copy only for the LU factorisation; no gradient flows through it.
+    dense_system = (
+        jnp.zeros((frequency_count, system_size, system_size), dtype=values.dtype)
+        .at[:, system_rows, system_columns]
+        .set(lax.stop_gradient(system_values))
+    )
+    factors = vmap(lu_factor)(dense_system)
+    signal = vmap(_solve_with_factors, in_axes=(0, None, None, 0, 0))(
+        system_values, system_rows, system_columns, factors, rhs
+    )
 
     # --------------------
     # Quantum noise solve
@@ -381,43 +425,31 @@ def simulate(
     # Back-propagate detector weights by solving the transposed conjugated signal system.
     carrier_selections = jnp.broadcast_to(
         carrier_selections,
-        (carrier_selections.shape[0], signal_matrix.shape[0], carrier_selections.shape[2]),
+        (carrier_selections.shape[0], frequency_count, carrier_selections.shape[2]),
     )
     rhs_columns = jnp.moveaxis(carrier_selections, 0, -1)
-    weight_columns = vmap(lambda a, f, b: _solve_with_factors(a, f, b, adjoint=True))(
-        system, factors, rhs_columns)
+    weight_columns = vmap(
+        lambda v, f, b: _solve_with_factors(v, system_rows, system_columns, f, b, adjoint=True)
+    )(system_values, factors, rhs_columns)
     noise_weights = jnp.moveaxis(weight_columns, -1, 0)
 
-    # Update noise source matrix (may depend on current parameters).
-    noise_matrix = vmap(update, in_axes=(0, None, None, None, None, None))(
+    # Update noise source matrix (may depend on current parameters), also as non-zero values.
+    noise_base_values, noise_rows, noise_columns = noise_matrix
+    noise_values = vmap(update_values, in_axes=(0, None, None, None, None, None))(
         parameters,
-        noise_matrix,
+        noise_base_values,
         noise_function_input_indices,
         noise_output_indices,
         noise_system_matrix_indices,
         noise_function_indices,
     )
 
-    def matmul_single_batch(matrix_batch: jnp.ndarray, vector_batch: jnp.ndarray) -> jnp.ndarray:
-        """
-        Multiply a batch of matrices with a batch of vectors.
-
-        Parameters
-        ----------
-        matrix_batch : jnp.ndarray
-            Shape (B, N, N).
-        vector_batch : jnp.ndarray
-            Shape (B, N).
-
-        Returns
-        -------
-        product : jnp.ndarray
-            Shape (B, N).
-        """
-        return jnp.einsum("bij,bj->bi", matrix_batch, vector_batch)
-
-    # Project noise sources into the system and propagate through the signal matrix.
-    noise_sources = vmap(matmul_single_batch, in_axes=(None, 0))(noise_matrix, noise_weights)
+    # Project noise sources into the system: N @ w for every detector and frequency.
+    noise_sources = vmap(
+        lambda detector_weights: vmap(
+            lambda frequency_values, weights: _sparse_matvec(frequency_values, noise_rows, noise_columns, system_size, weights)
+        )(noise_values, detector_weights)
+    )(noise_weights)
     # Aᴴ w = c, so cᴴ A⁻¹ y = wᴴ y for each detector and frequency.
     temporary_sum = jnp.sum(jnp.real(jnp.conjugate(noise_weights) * noise_sources), axis=2)
     noise = jnp.sqrt(2 * temporary_sum * UNIT_VACUUM * H_PLANCK * F0 * 0.25)
@@ -489,6 +521,8 @@ def run_build_step(
         )
 
     simulation_arrays = {arg_names[i]: array for i, array in enumerate(all_arrays)}
+    # Signal and noise matrices as lists of non-zero values (same argument names).
+    simulation_arrays = to_value_systems(simulation_arrays, carrier_size=matrices[1].shape[0])
 
     if timeit:
         for array in simulation_arrays.values():
