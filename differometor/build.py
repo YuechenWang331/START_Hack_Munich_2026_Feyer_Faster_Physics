@@ -1986,6 +1986,14 @@ def prepare_arrays(
     # Index the parameter row on the host: eager JAX indexing would compile XLA programs.
     host_parameters = np.asarray(parameters)
 
+    # simulate() evaluates the component laws on the REAL part of the parameters (host_components).
+    # That is exact because every physical parameter is real; enforce it here.
+    # (Values computed at run time by user-defined linking functions must be real as well.)
+    if np.any(np.imag(host_parameters) != 0):
+        raise ValueError("Setup parameters must be real-valued (found a non-zero imaginary part).")
+    if changing_values is not None and np.any(np.imag(np.asarray(changing_values)) != 0):
+        raise ValueError("Changing (sweep) values must be real-valued (found a non-zero imaginary part).")
+
     if len(optimized_parameter_indices) == 0:
         optimized_parameter_indices = _device_array([0])
         optimized_parameters = _device_array(host_parameters[0][[0]])

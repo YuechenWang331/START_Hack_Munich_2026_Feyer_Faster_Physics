@@ -103,6 +103,30 @@ class _ComponentMath:
         return _Coefficients(values)
 
 
+def _cos_arcsin(z):
+    """
+    cos(arcsin(z)) for real z, as the JAX laws compute it on complex parameters.
+
+    For |z| > 1 (total internal reflection, n1 / n2 * sin(alpha) > 1) the complex arcsin continues
+    to -i * sign(z) * sqrt(z^2 - 1); a real np.arcsin would give NaN. The derivative is the one JAX
+    uses for the complex expression, d/dz sqrt(1 - z^2 + 0j), on both sides of |z| = 1.
+    """
+    value = z.value if isinstance(z, _Dual) else z
+    magnitude = np.sqrt(np.abs(1 - value * value))
+    result = np.where(np.abs(value) <= 1, magnitude + 0j, -1j * np.sign(value) * magnitude)
+    if not isinstance(z, _Dual):
+        return result
+    with np.errstate(divide="ignore", invalid="ignore"):
+        slope = (0.5 / np.sqrt((1 - value * value).astype(np.complex128))) * (-2 * value)
+    return _Dual(result, z.derivative * slope)
+
+
+def _incidence_angle_right(alpha, refractive_index_left, refractive_index_right):
+    # Same law as components.incidence_angle_right, with cos(arcsin(.)) valid beyond |z| = 1.
+    ratio = refractive_index_left / refractive_index_right * _ComponentMath.sin(_ComponentMath.radians(alpha))
+    return _cos_arcsin(ratio)
+
+
 def _numpy_component_functions():
     # Keep one source of truth for the equations and use an isolated namespace
     # for the NumPy backend, without modifying the imported JAX module.
@@ -110,6 +134,8 @@ def _numpy_component_functions():
     for name, function in vars(components).items():
         if isinstance(function, FunctionType) and function.__module__ == components.__name__:
             namespace[name] = FunctionType(function.__code__, namespace, name, function.__defaults__, function.__closure__)
+    # The only law whose real-input NumPy version would differ from the complex JAX one.
+    namespace["incidence_angle_right"] = _incidence_angle_right
     return tuple(namespace[function.__name__] for function in components.FUNCTIONS)
 
 
