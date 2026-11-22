@@ -1,0 +1,131 @@
+{
+  "independent_processes": 30,
+  "warm_repeats": 0,
+  "pause_seconds": 30,
+  "source_sha256": {
+    "benchmark.py": "3c451203bc4b2b86148c0537104898191a038ad90aaa08577c8406f812cb3dc2",
+    "differometor/simulate.py": "f801dbc8a207bcb8cb88bf1428cb5639faa9afc628f6a6ad6f944c3b16486ed6",
+    "differometor/build.py": "4aa0fbdb3205dcf9a4428bb5f66b8f04f79ec18d7e14b0f44b3907408bfd8bfa",
+    "differometor/__init__.py": "ee998e325d47d1376345989a046161de5df06c618aa011893fc2eaa5ce38e4ff"
+  },
+  "totals": [
+    {
+      "metric": "first_run_seconds",
+      "n": 30,
+      "mean_s": 13.039629888904164,
+      "median_s": 12.623205188967404,
+      "sd_s": 1.2804691603874014,
+      "variance_s2": 1.639601270703217,
+      "min_s": 11.784754291002173,
+      "max_s": 16.96775704200263
+    },
+    {
+      "metric": "trace_lower_and_compile_seconds",
+      "n": 30,
+      "mean_s": 7.027371531936418,
+      "median_s": 6.950860062483116,
+      "sd_s": 0.39383108202669015,
+      "variance_s2": 0.15510292117031357,
+      "min_s": 6.50657462500385,
+      "max_s": 8.244453916995553
+    }
+  ],
+  "phases": [
+    {
+      "key": "imports",
+      "label": "Python / library imports",
+      "category": "setup",
+      "n": 30,
+      "mean_s": 0.5013931722651856,
+      "median_s": 0.42966027099464554,
+      "sd_s": 0.24937258881452676,
+      "variance_s2": 0.06218668805205903,
+      "min_s": 0.394937042001402,
+      "max_s": 1.7624159579863772
+    },
+    {
+      "key": "initialize",
+      "label": "Initialize CPU backend",
+      "category": "setup",
+      "n": 30,
+      "mean_s": 0.019871029198596565,
+      "median_s": 0.0051810834993375465,
+      "sd_s": 0.07674489593340389,
+      "variance_s2": 0.005889779051828993,
+      "min_s": 0.004413791990373284,
+      "max_s": 0.426043874991592
+    },
+    {
+      "key": "load",
+      "label": "Read and parse public inputs",
+      "category": "setup",
+      "n": 30,
+      "mean_s": 0.005604830501639905,
+      "median_s": 0.0024487709888489917,
+      "sd_s": 0.016232782683470195,
+      "variance_s2": 0.0002635032336487698,
+      "min_s": 0.002285499998833984,
+      "max_s": 0.09140854200813919
+    },
+    {
+      "key": "build",
+      "label": "Build optical setup and prepare inputs",
+      "category": "setup",
+      "n": 30,
+      "mean_s": 0.07119358616473619,
+      "median_s": 0.059345833491533995,
+      "sd_s": 0.03594128813125809,
+      "variance_s2": 0.0012917761925341136,
+      "min_s": 0.048270208993926644,
+      "max_s": 0.19334112500655465
+    },
+    {
+      "key": "evaluate_gradient_lower",
+      "label": "Fused evaluation + gradient: trace / lower",
+      "category": "compile",
+      "n": 30,
+      "mean_s": 1.4482637777682006,
+      "median_s": 1.4192602704861201,
+      "sd_s": 0.1468307908526295,
+      "variance_s2": 0.02155928114240863,
+      "min_s": 1.4005610419844743,
+      "max_s": 2.220267041993793
+    },
+    {
+      "key": "evaluate_gradient_compile",
+      "label": "Fused evaluation + gradient: compile",
+      "category": "compile",
+      "n": 30,
+      "mean_s": 5.579107754168217,
+      "median_s": 5.526470249998965,
+      "sd_s": 0.327484030419628,
+      "variance_s2": 0.10724579017988384,
+      "min_s": 5.10086649999721,
+      "max_s": 6.754134208022151
+    },
+    {
+      "key": "evaluate",
+      "label": "Forward + readout + gradient",
+      "category": "execute",
+      "n": 30,
+      "mean_s": 5.394890393005335,
+      "median_s": 5.188264458498452,
+      "sd_s": 0.7918233852521385,
+      "variance_s2": 0.6269842734321565,
+      "min_s": 4.5537400000030175,
+      "max_s": 8.056054250017041
+    },
+    {
+      "key": "host_transfer",
+      "label": "Transfer results to host",
+      "category": "output",
+      "n": 30,
+      "mean_s": 0.019305345832253806,
+      "median_s": 0.018518958502681926,
+      "sd_s": 0.004572154770737453,
+      "variance_s2": 2.090459924757725e-05,
+      "min_s": 0.01288774999557063,
+      "max_s": 0.03085616699536331
+    }
+  ]
+}

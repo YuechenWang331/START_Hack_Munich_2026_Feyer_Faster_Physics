@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Time a complete public optical setup evaluation and gradient, then plot every phase."""
+"""Benchmark the complete optical evaluation with one fused JAX compilation."""
 from time import perf_counter
 
 IMPORT_START = perf_counter()
@@ -129,13 +129,35 @@ def readout(outputs, detector_ports, reference):
     return loss, (sensitivity, df.power_detector(carrier))
 
 
-def sensitivity_with_pullback(outputs, detector_ports, reference):
-    return jax.vjp(lambda values: readout(values, detector_ports, reference), outputs, has_aux=True)
+def evaluate(parameters, arrays, detector_ports, reference):
+    """Run simulation, readout, and return auxiliary physical results for AD."""
+    outputs = df.simulate(**dict(arrays, optimized_parameters=parameters))
+    loss, (sensitivity, powers) = readout(outputs, detector_ports, reference)
+    return loss, (outputs, sensitivity, powers)
 
 
-def backward(simulation_pullback, readout_pullback, cotangent):
-    output_cotangents = readout_pullback(cotangent)[0]
-    return simulation_pullback(output_cotangents)[0]
+def render_phases(phases, output):
+    """Render the measured one-compile workflow phases."""
+    import matplotlib
+
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    labels = [phase["label"] for phase in phases]
+    values = [phase["seconds"] for phase in phases]
+    fig, ax = plt.subplots(figsize=(9, max(4.5, 0.42 * len(phases))))
+    ax.barh(range(len(values)), values, color="#C73135")
+    ax.set_yticks(range(len(labels)), labels)
+    ax.invert_yaxis()
+    ax.set_xlabel("Seconds")
+    ax.set_title("Benchmark 3: one compiled evaluation + gradient")
+    ax.grid(axis="x", color="#e5e5e5")
+    ax.set_axisbelow(True)
+    fig.tight_layout()
+    output.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(output, dpi=180)
+    plt.close(fig)
+    return output
 
 
 def main():
@@ -143,13 +165,13 @@ def main():
     here = Path(__file__).resolve().parent
     parser.add_argument("--repo", type=Path, default=here if (here / "differometor").is_dir() else here / "Differometor")
     parser.add_argument("--cpus", type=int, help="Pin this process to N allocated logical CPUs before imports (Linux/WSL)")
-    parser.add_argument("--repeats", type=int, default=0, help="Warm repetitions; zero measures only the first run")
-    parser.add_argument("--output", type=Path, default=Path("benchmark.json"), help="JSON report (.json)")
+    parser.add_argument("--repeats", type=int, default=0, help="First-run-only mode; must be zero")
+    parser.add_argument("--output", type=Path, default=Path("benchmark3.json"), help="JSON report (.json)")
     parser.add_argument("--plot", type=Path, help="Timing plot (.png, .svg or .pdf); defaults to the JSON filename with .png suffix")
     parser.add_argument("--save-arrays", type=Path, help="Save physical outputs, sensitivity, powers, parameters and gradient (.npz)")
     args = parser.parse_args()
     if args.repeats != 0:
-        parser.error("This first-run-only benchmark requires --repeats 0.")
+        parser.error("This first-run-only version requires --repeats 0.")
     plot_path = output_paths(args, parser)
     repo = args.repo.resolve()
     if Path(df.__file__).resolve().parent != repo / "differometor":
@@ -189,7 +211,12 @@ def main():
 
     fixture_bytes, reference_bytes, fixture, reference = timed("load", "Read and parse public inputs", "setup", load_inputs)
     # Integrity checks are validation, so they are outside measured phases.
-    if (hashlib.sha256(fixture_bytes).hexdigest(), hashlib.sha256(reference_bytes).hexdigest()) != (FIXTURE_SHA256, REFERENCE_SHA256):
+    # Git may check out JSON fixtures with CRLF line endings on Windows.
+    # Normalize line endings for the integrity check so unchanged fixture
+    # contents still match the canonical LF hashes.
+    canonical_fixture = fixture_bytes.replace(b"\r\n", b"\n")
+    canonical_reference = reference_bytes.replace(b"\r\n", b"\n")
+    if (hashlib.sha256(canonical_fixture).hexdigest(), hashlib.sha256(canonical_reference).hexdigest()) != (FIXTURE_SHA256, REFERENCE_SHA256):
         parser.error("Restore the unchanged public fixtures from the baseline commit.")
     source = git_state(repo)
 
@@ -208,38 +235,38 @@ def main():
         expected = jnp.asarray(reference["sensitivities"], dtype=jnp.float64)
         arrays, ports, *_ = df.run_build_step(setup, [("f", "frequency")], frequencies, pairs)
         arrays["optimized_parameters"] = parameters
-        return arrays, jnp.asarray(ports), parameters, frequencies, expected, pairs, jnp.asarray(1.0, dtype=jnp.float64)
+        return arrays, jnp.asarray(ports), parameters, frequencies, expected, pairs
 
-    arrays, ports, parameters, frequencies, expected, pairs, one = timed("build", "Build optical setup and prepare inputs", "setup", build_inputs)
+    arrays, ports, parameters, frequencies, expected, pairs = timed("build", "Build optical setup and prepare inputs", "setup", build_inputs)
     print(f"Workload: 101 frequencies; {len(parameters)} physical design variables; no optimizer", flush=True)
 
-    forward = compile_phase("forward", "Forward", forward_with_pullback, parameters, arrays)
-    outputs, simulation_pullback = timed("forward", "Forward simulation + AD residuals", "execute", lambda: forward(parameters, arrays))
-    sensitivity_fn = compile_phase("sensitivity", "Sensitivity", sensitivity_with_pullback, outputs, ports, expected)
-    loss, readout_pullback, (sensitivity, powers) = timed("sensitivity", "Sensitivity, powers and scalar loss", "execute", lambda: sensitivity_fn(outputs, ports, expected))
-    gradient_fn = compile_phase("gradient", "Gradient", backward, simulation_pullback, readout_pullback, one)
-    gradient = timed("gradient", "Reverse-mode gradient", "execute", lambda: gradient_fn(simulation_pullback, readout_pullback, one))
-    host = timed("host_transfer", "Transfer results to host", "output", lambda: jax.device_get((outputs, sensitivity, powers, loss, gradient)))
+    # One JIT executable contains the forward simulation, readout, and
+    # reverse-mode gradient instead of compiling three staged functions.
+    evaluate_and_grad = jax.value_and_grad(evaluate, argnums=0, has_aux=True)
+    compiled = compile_phase(
+        "evaluate_gradient", "Fused evaluation + gradient",
+        evaluate_and_grad, parameters, arrays, ports, expected,
+    )
+
+    def unpack_result(result):
+        (loss, (outputs, sensitivity, powers)), gradient = result
+        return outputs, sensitivity, powers, loss, gradient
+
+    result = timed(
+        "evaluate", "Forward + readout + gradient", "execute",
+        lambda: compiled(parameters, arrays, ports, expected),
+    )
+    host = timed(
+        "host_transfer", "Transfer results to host", "output",
+        lambda: jax.device_get(unpack_result(result)),
+    )
     first_phases = list(phases)
     total = sum(phase["seconds"] for phase in first_phases)
     print(f"Complete first-run total (excluding validation): {total:.6f} s", flush=True)
 
-    # Reuse compiled programs, but recompute both passes and all readouts each time.
     repeat_samples = []
-    for index in range(args.repeats):
-        # Do not keep the previous multi-GB AD tape alive during the next solve.
-        del simulation_pullback, readout_pullback
-        phases.clear()
-        outputs, simulation_pullback = timed("forward", "Forward", "execute", lambda: forward(parameters, arrays))
-        loss, readout_pullback, (sensitivity, powers) = timed("sensitivity", "Sensitivity", "execute", lambda: sensitivity_fn(outputs, ports, expected))
-        gradient = timed("gradient", "Gradient", "execute", lambda: gradient_fn(simulation_pullback, readout_pullback, one))
-        host = timed("host_transfer", "Host transfer", "output", lambda: jax.device_get((outputs, sensitivity, powers, loss, gradient)))
-        sample = {phase["key"]: phase["seconds"] for phase in phases}
-        repeat_samples.append(sample)
-        print(f"Repeat {index + 1:02d}/{args.repeats}: {sum(sample.values()):.6f} s", flush=True)
 
     # Validation only: no timers below contribute to the benchmark total.
-    del simulation_pullback, readout_pullback
     print("Validating outputs, reference sensitivity and finite-difference gradient...", flush=True)
     host_outputs, host_sensitivity, host_powers, host_loss, host_gradient = host
     for value in jax.tree_util.tree_leaves(host):
@@ -254,29 +281,31 @@ def main():
 
     # Independent central-difference spot check, away from near-bound reflectivities.
     check_index = pairs.index(["mb11", "tuning"])
-    def loss_only(p, a, detector_ports, target):
-        return readout(df.simulate(**dict(a, optimized_parameters=p)), detector_ports, target)[0]
-    evaluate_loss = jax.jit(loss_only)
+    def evaluate_loss(candidate_parameters):
+        # Reuse the fused executable, so validation does not add a JIT compile.
+        return compiled(candidate_parameters, arrays, ports, expected)[0][0]
+
     autodiff = float(host_gradient[check_index])
     finite_differences = []
     # Two step sizes check convergence; smaller 1e-5 perturbations are noisy
     # for this saved, highly sensitive optical setup in float64 arithmetic.
     for check_step in (1e-3, 5e-4):
-        upper = float(evaluate_loss(parameters.at[check_index].add(check_step), arrays, ports, expected))
-        lower = float(evaluate_loss(parameters.at[check_index].add(-check_step), arrays, ports, expected))
+        upper = float(evaluate_loss(parameters.at[check_index].add(check_step)))
+        lower = float(evaluate_loss(parameters.at[check_index].add(-check_step)))
         estimate = (upper - lower) / (2 * check_step)
         np.testing.assert_allclose(autodiff, estimate, rtol=0.01, atol=1e-6)
         finite_differences.append({"step": check_step, "central_difference": estimate, "absolute_error": abs(autodiff - estimate)})
     np.testing.assert_allclose(finite_differences[0]["central_difference"], finite_differences[1]["central_difference"], rtol=0.01, atol=1e-6)
 
-    totals = [sum(sample.values()) for sample in repeat_samples]
+    totals = []
+    phase_medians = {}
     report = {
-        "benchmark": "start-munich-2026-public-differometor-uifo-v2",
+        "benchmark": "start-munich-2026-public-differometor-uifo-single-compile-v1",
         "measured_at_utc": datetime.now(timezone.utc).isoformat(),
         "starter_sha256": hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
         "source": {"public_repository": PUBLIC_REPO, "baseline_commit": BASELINE_COMMIT, **source},
         "inputs": {"setup": fixture_path.name, "setup_sha256": FIXTURE_SHA256, "reference": reference_path.name, "reference_sha256": REFERENCE_SHA256, "frequency_count": len(frequencies), "gradient_parameter_count": len(parameters), "optimization_pairs": pairs},
-        "workload": {"objective": "mean(log10(sensitivity / public_reference))", "gradient_coordinates": "physical parameter values; public grid-length tying", "optimizer_steps": 0, "forward_residuals": "saved for separately compiled reverse pass", "total_scope": "imports, CPU initialization, input I/O, setup, all lowering/compilation, forward, sensitivity/powers/loss, reverse-mode gradient and host transfer", "excluded": "validation and benchmark harness bookkeeping, repeated profiling, plot/report generation; interpreter launch before the first timer"},
+        "workload": {"objective": "mean(log10(sensitivity / public_reference))", "gradient_coordinates": "physical parameter values; public grid-length tying", "optimizer_steps": 0, "compilation_strategy": "one jitted value_and_grad executable containing simulation, readout, and reverse-mode differentiation", "total_scope": "imports, CPU initialization, input I/O, setup, single lowering/compilation, forward, sensitivity/powers/loss, reverse-mode gradient and host transfer", "excluded": "validation and benchmark harness bookkeeping, repeated profiling, plot/report generation; interpreter launch before the first timer"},
         "environment": {
             "cpu_model": cpu_model(), "cpu_affinity_count": len(os.sched_getaffinity(0)) if hasattr(os, "sched_getaffinity") else None,
             "cpu_affinity_ids": sorted(os.sched_getaffinity(0)) if hasattr(os, "sched_getaffinity") else None,
@@ -289,7 +318,7 @@ def main():
         },
         "phases": first_phases,
         "repeat_samples": repeat_samples,
-        "timing_seconds": {"end_to_end": total, "trace_lower_and_compile": sum(p["seconds"] for p in first_phases if p["category"] == "compile"), "runtime_samples": totals, "runtime_median": (statistics.median(totals) if totals else None), "runtime_min": (min(totals) if totals else None), "runtime_max": (max(totals) if totals else None), "phase_runtime_medians": {key: statistics.median(sample[key] for sample in repeat_samples) for key in (repeat_samples[0] if repeat_samples else {})}},
+        "timing_seconds": {"end_to_end": total, "trace_lower_and_compile": sum(p["seconds"] for p in first_phases if p["category"] == "compile"), "runtime_samples": totals, "runtime_median": None, "runtime_min": None, "runtime_max": None, "phase_runtime_medians": phase_medians},
         "validation": {
             "all_outputs_and_gradients_finite": True, "upstream_sensitivity_check_passed": True, "max_absolute_log_sensitivity_error": float(log_error.max()),
             "gradient_check": {"parameter": "mb11.tuning", "autodiff": autodiff, "finite_differences": finite_differences, "rtol": 0.01, "atol": 1e-6, "passed": True},
@@ -303,8 +332,7 @@ def main():
         np.savez_compressed(args.save_arrays, carrier=host_outputs[0], signal=host_outputs[1], noise=host_outputs[2], sensitivity=host_sensitivity, powers=host_powers, gradient=host_gradient, parameters=np.asarray(parameters), frequencies=np.asarray(frequencies))
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(report, indent=2, allow_nan=False) + "\n")
-    from plot_timings import render
-    render(report, plot_path)
+    render_phases(first_phases, plot_path)
     print(f"PASS: reference sensitivity and gradient spot check; first-run total {total:.6f} s")
     print(f"JSON: {args.output}\nPlot: {plot_path}")
 

@@ -1,0 +1,25 @@
+run,key,label,category,seconds
+1,imports,Python / library imports,setup,0.6263259159750305
+1,initialize,Initialize CPU backend,setup,0.014107124996371567
+1,load,Read and parse public inputs,setup,0.002921457984484732
+1,build,Build optical setup and prepare inputs,setup,0.1845446660008747
+1,evaluate_gradient_lower,Fused evaluation + gradient: trace / lower,compile,0.9394085000094492
+1,evaluate_gradient_compile,Fused evaluation + gradient: compile,compile,2.6917228329984937
+1,evaluate,Forward + readout + gradient,execute,2.8119635420152918
+1,host_transfer,Transfer results to host,output,0.00122916599502787
+2,imports,Python / library imports,setup,0.4636259160179179
+2,initialize,Initialize CPU backend,setup,0.005164540983969346
+2,load,Read and parse public inputs,setup,0.0024797500227577984
+2,build,Build optical setup and prepare inputs,setup,0.07708700001239777
+2,evaluate_gradient_lower,Fused evaluation + gradient: trace / lower,compile,0.8974905000068247
+2,evaluate_gradient_compile,Fused evaluation + gradient: compile,compile,2.6377734589914326
+2,evaluate,Forward + readout + gradient,execute,3.137642167013837
+2,host_transfer,Transfer results to host,output,0.016229374974500388
+3,imports,Python / library imports,setup,0.4387411249917932
+3,initialize,Initialize CPU backend,setup,0.005302167002810165
+3,load,Read and parse public inputs,setup,0.0023836670152377337
+3,build,Build optical setup and prepare inputs,setup,0.07705545899807476
+3,evaluate_gradient_lower,Fused evaluation + gradient: trace / lower,compile,0.9197583339991979
+3,evaluate_gradient_compile,Fused evaluation + gradient: compile,compile,2.73608633299591
+3,evaluate,Forward + readout + gradient,execute,3.198059667018242
+3,host_transfer,Transfer results to host,output,0.011019958008546382
