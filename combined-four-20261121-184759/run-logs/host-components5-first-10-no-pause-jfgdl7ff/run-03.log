@@ -1,0 +1,14 @@
+Initialize CPU backend: 0.004695 s
+CPU: Apple M4; affinity: unknown; devices: [CpuDevice(id=0)]
+Read and parse public inputs: 0.002282 s
+Build optical setup and prepare inputs: 0.073140 s
+Workload: 101 frequencies; 193 physical design variables; no optimizer
+Fused evaluation + gradient: trace / lower: 0.188109 s
+Fused evaluation + gradient: compile: 0.438968 s
+Forward + readout + gradient: 0.449770 s
+Transfer results to host: 0.000162 s
+Complete first-run total (excluding validation): 1.536414 s
+Validating outputs, reference sensitivity and finite-difference gradient...
+PASS: reference sensitivity and gradient spot check; first-run total 1.536414 s
+JSON: /Users/yuechen/Desktop/feyer-five-isolated/combined-four-20261121-184759/run-logs/host-components5-first-10-no-pause-jfgdl7ff/run-03.json
+Plot: /Users/yuechen/Desktop/feyer-five-isolated/combined-four-20261121-184759/run-logs/host-components5-first-10-no-pause-jfgdl7ff/run-03.png
