@@ -26,6 +26,8 @@ from differometor.setups import Setup
 from differometor.build import build, pairs_to_arrays, prepare_arrays, to_value_systems, LINKING_FUNCTIONS
 from differometor.components import FUNCTIONS, UNIT_VACUUM, H_PLANCK, F0
 from differometor.sparse_solve import signal_solves
+from differometor.carrier_solve import carrier_solve
+from differometor.host_components import component_outputs
 
 
 jax.config.update("jax_enable_x64", True)
@@ -311,15 +313,13 @@ def simulate(
     # Carrier solve
     # --------------------
     parameters = expand_parameters(parameters, carrier_changing_parameter_indices, carrier_changing_values)
-    carrier_matrix = vmap(update, in_axes=(0, None, None, None, None, None))(
-        parameters,
-        carrier_matrix,
-        carrier_function_input_indices,
-        carrier_output_indices,
-        carrier_matrix_indices,
-        carrier_function_indices,
+    carrier_coefficients = component_outputs(
+        jnp.real(parameters), carrier_function_input_indices, carrier_output_indices,
     )
-    carrier = jnp.linalg.solve(carrier_matrix[:, :, :-1], carrier_matrix[:, :, -1:])[..., 0]
+    carrier_matrix = vmap(
+        lambda entries: carrier_matrix.at[carrier_matrix_indices[0], carrier_matrix_indices[1]].set(entries)
+    )(carrier_coefficients)
+    carrier = carrier_solve(carrier_matrix[:, :, :-1], carrier_matrix[:, :, -1])
 
     # --------------------
     # Signal solve
@@ -338,14 +338,10 @@ def simulate(
     system_size = noise_selection_vectors.shape[-1]
 
     parameters = expand_parameters(parameters, signal_changing_parameter_indices, signal_changing_values)
-    values = vmap(update_values, in_axes=(0, None, None, None, None, None))(
-        parameters,
-        base_values,
-        signal_function_input_indices,
-        signal_output_indices,
-        signal_matrix_indices,
-        signal_function_indices,
+    signal_coefficients = component_outputs(
+        jnp.real(parameters), signal_function_input_indices, signal_output_indices,
     )
+    values = vmap(lambda entries: base_values.at[signal_matrix_indices].set(entries))(signal_coefficients)
     frequency_count = values.shape[0]
 
     # Scale signal connector entries by the carrier solution at the respective spaces.
@@ -401,14 +397,10 @@ def simulate(
 
     # Update noise source matrix (may depend on current parameters), also as non-zero values.
     noise_base_values, noise_rows, noise_columns = noise_matrix
-    noise_values = vmap(update_values, in_axes=(0, None, None, None, None, None))(
-        parameters,
-        noise_base_values,
-        noise_function_input_indices,
-        noise_output_indices,
-        noise_system_matrix_indices,
-        noise_function_indices,
+    noise_coefficients = component_outputs(
+        jnp.real(parameters), noise_function_input_indices, noise_output_indices,
     )
+    noise_values = vmap(lambda entries: noise_base_values.at[noise_system_matrix_indices].set(entries))(noise_coefficients)
 
     # Project noise sources into the system: N @ w for every detector and frequency.
     noise_sources = vmap(
